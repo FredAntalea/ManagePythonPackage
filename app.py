@@ -72,6 +72,23 @@ def get_system_packages():
     return result
 
 
+def _get_system_packages_for(py_tag):
+    """Retourne les packages installés pour une version Python système via py -X.Y -m pip list."""
+    result = {}
+    try:
+        out = subprocess.check_output(
+            ["py", py_tag, "-m", "pip", "list", "--format=freeze"],
+            stderr=subprocess.DEVNULL, text=True
+        )
+        for line in out.splitlines():
+            if "==" in line:
+                name, _, version = line.partition("==")
+                result[_normalize(name.strip())] = version.strip()
+    except Exception:
+        pass
+    return result
+
+
 def get_venv_packages(pip_exe):
     result = {}
     try:
@@ -308,13 +325,19 @@ class ComparePanel(tk.Frame):
             return
         threading.Thread(target=self._do_install, args=(paths,), daemon=True).start()
 
+    def _pip_cmd(self):
+        """Retourne la commande pip sous forme de liste."""
+        if isinstance(self._pip_exe, list):
+            return self._pip_exe          # ex. ["py", "-V:3.14", "-m", "pip"]
+        return [self._pip_exe]            # ex. ["C:\...\pip.exe"]
+
     def _do_install(self, paths):
         for path in paths:
             self._log(f"→ Installation : {os.path.basename(path)}")
             try:
+                cmd = self._pip_cmd() + ["install", "--no-index", path]
                 proc = subprocess.Popen(
-                    [self._pip_exe, "install", "--no-index", path],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
                 )
                 for line in proc.stdout:
                     self._log(line.rstrip())
@@ -329,7 +352,11 @@ class ComparePanel(tk.Frame):
         self.after(0, self._reload_after_install)
 
     def _reload_after_install(self):
-        if self._pip_exe:
+        if isinstance(self._pip_exe, list):
+            # commande système : ["py", "-V:3.13", "-m", "pip"]
+            tag = self._pip_exe[1] if len(self._pip_exe) > 1 else ""
+            new_installed = _get_system_packages_for(tag)
+        elif self._pip_exe:
             new_installed = get_venv_packages(self._pip_exe)
         else:
             new_installed = get_system_packages()
@@ -375,7 +402,13 @@ class PackageManagerApp(tk.Tk):
 
         sys_bar = tk.Frame(tab_sys, pady=4)
         sys_bar.grid(row=0, column=0, sticky="ew", padx=6)
-        tk.Button(sys_bar, text="Rafraîchir", command=self._load_system).pack(side=tk.LEFT)
+        tk.Label(sys_bar, text="Version Python :").pack(side=tk.LEFT)
+        self.sys_py_var = tk.StringVar()
+        self.sys_py_combo = ttk.Combobox(sys_bar, textvariable=self.sys_py_var,
+                                         state="readonly", width=14)
+        self.sys_py_combo.pack(side=tk.LEFT, padx=4)
+        self.sys_py_combo.bind("<<ComboboxSelected>>", lambda _: self._load_system())
+        tk.Button(sys_bar, text="Rafraîchir", command=self._load_system).pack(side=tk.LEFT, padx=4)
         self.sys_info = tk.StringVar()
         tk.Label(sys_bar, textvariable=self.sys_info, fg="#555").pack(side=tk.LEFT, padx=10)
 
@@ -506,16 +539,32 @@ class PackageManagerApp(tk.Tk):
     # ── Python système ────────────────────────────────────────────────────────
 
     def _load_system(self):
-        self._log("Chargement des packages système…")
-        installed = get_system_packages()
-        py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-        whls = get_local_whls(target_python_version=py_ver)
-        pip_exe = os.path.join(os.path.dirname(sys.executable), "pip.exe")
-        if not os.path.isfile(pip_exe):
-            pip_exe = sys.executable
-        self.sys_panel.load(installed, whls, pip_exe)
-        self.sys_info.set(f"Python {py_ver}  —  {len(installed)} packages")
-        self._log(f"Système : {len(installed)} packages, {len(whls)} .whl disponibles.")
+        tag = self.sys_py_var.get().strip()
+        if not tag:
+            return
+        self._log(f"Chargement des packages Python système ({tag})…")
+        threading.Thread(target=self._do_load_system, args=(tag,), daemon=True).start()
+
+    def _do_load_system(self, tag):
+        # Récupère version complète et packages via py
+        try:
+            ver_out = subprocess.check_output(
+                ["py", tag, "-c",
+                 "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"],
+                stderr=subprocess.DEVNULL, text=True
+            ).strip()
+        except Exception:
+            ver_out = tag.lstrip("-V:").strip()
+
+        installed = _get_system_packages_for(tag)
+        pip_exe_cmd = ["py", tag, "-m", "pip"]
+        whls = get_local_whls(target_python_version=ver_out)
+        self.after(0, lambda: self._apply_system(installed, whls, pip_exe_cmd, tag, ver_out))
+
+    def _apply_system(self, installed, whls, pip_exe_cmd, tag, ver_out):
+        self.sys_panel.load(installed, whls, pip_exe_cmd)
+        self.sys_info.set(f"Python {ver_out}  —  {len(installed)} packages")
+        self._log(f"Système {tag} : {len(installed)} packages, {len(whls)} .whl disponibles.")
 
     # ── Venvs ─────────────────────────────────────────────────────────────────
 
@@ -571,10 +620,16 @@ class PackageManagerApp(tk.Tk):
         self.after(0, lambda: self._set_python_versions(versions))
 
     def _set_python_versions(self, versions):
+        # Combo onglet "Créer un venv"
         self.py_combo["values"] = versions
         if versions:
             self.py_combo.current(0)
+        # Combo onglet "Python système"
+        self.sys_py_combo["values"] = versions
+        if versions:
+            self.sys_py_combo.current(0)
             self._log(f"Versions Python détectées : {', '.join(versions)}")
+            self._load_system()
         else:
             self._log("Aucune version Python détectée via le Python Launcher.")
 
