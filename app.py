@@ -1,436 +1,218 @@
-import sqlite3
-import os
+import tkinter as tk
+from tkinter import ttk, messagebox
+import subprocess
 import sys
-import atexit
-import getpass
-from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify
+import threading
+import importlib.metadata
+import os
 
-app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'projets.db')
-LOCK_FILE = os.path.join(BASE_DIR, '.lock')
+PACKAGES_DIR = os.path.join(BASE_DIR, "packages")
 
 
-# === SYSTEME DE VERROU ===
+def get_installed_packages():
+    packages = sorted(
+        importlib.metadata.distributions(),
+        key=lambda d: d.metadata["Name"].lower()
+    )
+    return [(d.metadata["Name"], d.metadata["Version"]) for d in packages]
 
-def check_lock():
-    """Vérifie si l'application est déjà utilisée par quelqu'un d'autre."""
-    if os.path.exists(LOCK_FILE):
+
+def get_local_whls():
+    if not os.path.isdir(PACKAGES_DIR):
+        os.makedirs(PACKAGES_DIR)
+    return sorted(f for f in os.listdir(PACKAGES_DIR) if f.endswith(".whl"))
+
+
+class PackageManagerApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Gestionnaire de Packages Python")
+        self.geometry("900x650")
+        self.resizable(True, True)
+        self._build_ui()
+        self._load_packages()
+        self._load_whls()
+
+    def _build_ui(self):
+        header = tk.Frame(self, bg="#2c3e50", pady=8)
+        header.pack(fill=tk.X)
+        tk.Label(
+            header, text="Gestionnaire de Packages Python",
+            font=("Helvetica", 14, "bold"), fg="white", bg="#2c3e50"
+        ).pack()
+
+        # Panneau principal : deux colonnes
+        main = tk.Frame(self)
+        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+        main.columnconfigure(0, weight=3)
+        main.columnconfigure(1, weight=2)
+        main.rowconfigure(0, weight=1)
+
+        # --- Colonne gauche : packages installés ---
+        left = tk.LabelFrame(main, text="Packages installés", padx=6, pady=6)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        left.rowconfigure(1, weight=1)
+        left.columnconfigure(0, weight=1)
+
+        search_frame = tk.Frame(left)
+        search_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        tk.Label(search_frame, text="Rechercher :").pack(side=tk.LEFT)
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", lambda *_: self._filter_packages())
+        tk.Entry(search_frame, textvariable=self.search_var, width=25).pack(side=tk.LEFT, padx=4)
+        tk.Button(search_frame, text="Rafraîchir", command=self._load_packages).pack(side=tk.RIGHT)
+
+        tree_frame = tk.Frame(left)
+        tree_frame.grid(row=1, column=0, sticky="nsew")
+        columns = ("name", "version")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+        self.tree.heading("name", text="Nom", command=lambda: self._sort("name"))
+        self.tree.heading("version", text="Version", command=lambda: self._sort("version"))
+        self.tree.column("name", width=300)
+        self.tree.column("version", width=120)
+        sb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.count_var = tk.StringVar(value="")
+        tk.Label(left, textvariable=self.count_var, anchor="w", fg="#555").grid(
+            row=2, column=0, sticky="w", pady=(2, 0)
+        )
+
+        # --- Colonne droite : .whl disponibles ---
+        right = tk.LabelFrame(main, text=f"Packages disponibles  (dossier : packages/)", padx=6, pady=6)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+
+        btn_frame = tk.Frame(right)
+        btn_frame.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        tk.Button(btn_frame, text="Rafraîchir la liste", command=self._load_whls).pack(side=tk.LEFT)
+        tk.Label(btn_frame, text="← Déposez vos .whl ici", fg="#888", font=("Helvetica", 8)).pack(side=tk.RIGHT)
+
+        whl_frame = tk.Frame(right)
+        whl_frame.grid(row=1, column=0, sticky="nsew")
+        self.whl_list = tk.Listbox(whl_frame, selectmode=tk.SINGLE, activestyle="dotbox")
+        whl_sb = ttk.Scrollbar(whl_frame, orient=tk.VERTICAL, command=self.whl_list.yview)
+        self.whl_list.configure(yscrollcommand=whl_sb.set)
+        self.whl_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        whl_sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.whl_count_var = tk.StringVar(value="")
+        tk.Label(right, textvariable=self.whl_count_var, anchor="w", fg="#555").grid(
+            row=2, column=0, sticky="w", pady=(2, 0)
+        )
+
+        tk.Button(
+            right, text="Installer le package sélectionné",
+            bg="#27ae60", fg="white", font=("Helvetica", 10, "bold"),
+            command=self._install_selected
+        ).grid(row=3, column=0, sticky="ew", pady=(6, 0))
+
+        # --- Journal ---
+        log_frame = tk.LabelFrame(self, text="Journal", padx=6, pady=4)
+        log_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        self.log_text = tk.Text(
+            log_frame, height=6, state=tk.DISABLED,
+            bg="#1e1e1e", fg="#d4d4d4", font=("Courier", 9)
+        )
+        log_sb = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_sb.set)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._all_packages = []
+        self._sort_col = "name"
+        self._sort_reverse = False
+
+    # ── Packages installés ──────────────────────────────────────────────────
+
+    def _load_packages(self):
+        self._log("Chargement des packages installés…")
+        self._all_packages = get_installed_packages()
+        self._filter_packages()
+        self._log(f"{len(self._all_packages)} packages trouvés.")
+
+    def _filter_packages(self):
+        query = self.search_var.get().lower()
+        filtered = [(n, v) for n, v in self._all_packages if query in n.lower()]
+        self._populate_tree(filtered)
+
+    def _populate_tree(self, packages):
+        self.tree.delete(*self.tree.get_children())
+        for name, version in packages:
+            self.tree.insert("", tk.END, values=(name, version))
+        self.count_var.set(f"{len(packages)} package(s) affiché(s)")
+
+    def _sort(self, col):
+        if self._sort_col == col:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_col = col
+            self._sort_reverse = False
+        idx = 0 if col == "name" else 1
+        query = self.search_var.get().lower()
+        filtered = [(n, v) for n, v in self._all_packages if query in n.lower()]
+        filtered.sort(key=lambda x: x[idx].lower(), reverse=self._sort_reverse)
+        self._populate_tree(filtered)
+
+    # ── Fichiers .whl locaux ────────────────────────────────────────────────
+
+    def _load_whls(self):
+        self.whl_list.delete(0, tk.END)
+        whls = get_local_whls()
+        for whl in whls:
+            self.whl_list.insert(tk.END, whl)
+        count = len(whls)
+        self.whl_count_var.set(f"{count} fichier(s) disponible(s)")
+        if count == 0:
+            self._log(f"Aucun .whl trouvé dans {PACKAGES_DIR}")
+        else:
+            self._log(f"{count} fichier(s) .whl disponible(s) dans packages/")
+
+    def _install_selected(self):
+        selection = self.whl_list.curselection()
+        if not selection:
+            messagebox.showwarning("Rien de sélectionné", "Sélectionnez un fichier .whl dans la liste.")
+            return
+        filename = self.whl_list.get(selection[0])
+        path = os.path.join(PACKAGES_DIR, filename)
+        self._log(f"Installation de : {filename}")
+        threading.Thread(target=self._run_install, args=(path,), daemon=True).start()
+
+    def _run_install(self, path):
         try:
-            with open(LOCK_FILE, 'r') as f:
-                content = f.read().strip()
-                user, timestamp = content.split('|')
-                print(f"\n{'='*60}")
-                print(f"  ⚠️  ATTENTION : L'application est déjà utilisée")
-                print(f"  Par : {user}")
-                print(f"  Depuis : {timestamp}")
-                print(f"{'='*60}\n")
-                response = input("Voulez-vous forcer le lancement ? (o/n) : ")
-                if response.lower() != 'o':
-                    print("Abandon.")
-                    sys.exit(0)
-        except (ValueError, IOError):
-            pass
-
-
-def create_lock():
-    """Crée le fichier verrou."""
-    user = getpass.getuser()
-    timestamp = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-    with open(LOCK_FILE, 'w') as f:
-        f.write(f"{user}|{timestamp}")
-
-
-def remove_lock():
-    """Supprime le fichier verrou."""
-    try:
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
-    except IOError:
-        pass
-
-
-# === BASE DE DONNÉES ===
-
-def get_db():
-    """Connexion à la base de données SQLite."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def migrate_db():
-    """Migration automatique : ajoute les colonnes manquantes."""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # Vérifier les colonnes existantes de la table projects
-    cursor.execute("PRAGMA table_info(projects)")
-    existing_columns = [row['name'] for row in cursor.fetchall()]
-
-    # Ajouter project_type si manquante
-    if 'project_type' not in existing_columns:
-        cursor.execute("ALTER TABLE projects ADD COLUMN project_type TEXT DEFAULT ''")
-        print("[MIGRATION] Ajout de la colonne 'project_type' à la table projects")
-
-    # Ajouter ticket_number si manquante
-    if 'ticket_number' not in existing_columns:
-        cursor.execute("ALTER TABLE projects ADD COLUMN ticket_number TEXT DEFAULT ''")
-        print("[MIGRATION] Ajout de la colonne 'ticket_number' à la table projects")
-
-    # Ajouter ticket_date si manquante
-    if 'ticket_date' not in existing_columns:
-        cursor.execute("ALTER TABLE projects ADD COLUMN ticket_date TEXT DEFAULT ''")
-        print("[MIGRATION] Ajout de la colonne 'ticket_date' à la table projects")
-
-    conn.commit()
-    conn.close()
-
-
-def init_db():
-    """Initialise la base de données avec les tables nécessaires."""
-    conn = get_db()
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE
-        );
-
-        CREATE TABLE IF NOT EXISTS projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            category_id INTEGER,
-            project_type TEXT DEFAULT '',
-            ticket_number TEXT DEFAULT '',
-            ticket_date TEXT DEFAULT '',
-            cadrage_status TEXT DEFAULT 'Non démarré',
-            cadrage_start TEXT DEFAULT '',
-            cadrage_end TEXT DEFAULT '',
-            recette_status TEXT DEFAULT 'Non démarré',
-            recette_start TEXT DEFAULT '',
-            recette_end TEXT DEFAULT '',
-            preprod_status TEXT DEFAULT 'Non démarré',
-            preprod_start TEXT DEFAULT '',
-            preprod_end TEXT DEFAULT '',
-            mep_status TEXT DEFAULT 'Non démarré',
-            mep_start TEXT DEFAULT '',
-            mep_end TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES categories(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            role TEXT DEFAULT '',
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS dqas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'En cours',
-            date TEXT DEFAULT '',
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS formations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            type TEXT NOT NULL DEFAULT 'Outil',
-            date TEXT DEFAULT '',
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-        );
-    ''')
-    conn.commit()
-    conn.close()
-    migrate_db()
-
-
-# === ROUTES PAGES ===
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-
-# === API CATEGORIES (FLGE) ===
-
-@app.route('/api/categories', methods=['GET'])
-def get_categories():
-    conn = get_db()
-    categories = conn.execute('SELECT * FROM categories ORDER BY name').fetchall()
-    conn.close()
-    return jsonify([dict(c) for c in categories])
-
-
-@app.route('/api/categories', methods=['POST'])
-def create_category():
-    data = request.json
-    conn = get_db()
-    try:
-        conn.execute('INSERT INTO categories (name) VALUES (?)', (data['name'],))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        return jsonify({'error': 'Cette FLGE existe déjà'}), 400
-    conn.close()
-    return jsonify({'success': True}), 201
-
-
-@app.route('/api/categories/<int:cat_id>', methods=['DELETE'])
-def delete_category(cat_id):
-    conn = get_db()
-    conn.execute('DELETE FROM categories WHERE id = ?', (cat_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-# === API PROJETS ===
-
-@app.route('/api/projects', methods=['GET'])
-def get_projects():
-    conn = get_db()
-    projects = conn.execute('''
-        SELECT p.*, c.name as category_name
-        FROM projects p
-        LEFT JOIN categories c ON p.category_id = c.id
-        ORDER BY p.created_at DESC
-    ''').fetchall()
-
-    result = []
-    for p in projects:
-        project = dict(p)
-        # Récupérer les intervenants
-        members = conn.execute(
-            'SELECT * FROM members WHERE project_id = ?', (p['id'],)
-        ).fetchall()
-        project['members'] = [dict(m) for m in members]
-        # Récupérer les DQA
-        dqas = conn.execute(
-            'SELECT * FROM dqas WHERE project_id = ?', (p['id'],)
-        ).fetchall()
-        project['dqas'] = [dict(d) for d in dqas]
-        # Récupérer les formations
-        formations = conn.execute(
-            'SELECT * FROM formations WHERE project_id = ?', (p['id'],)
-        ).fetchall()
-        project['formations'] = [dict(f) for f in formations]
-        result.append(project)
-
-    conn.close()
-    return jsonify(result)
-
-
-@app.route('/api/projects', methods=['POST'])
-def create_project():
-    data = request.json
-    conn = get_db()
-    cursor = conn.execute('''
-        INSERT INTO projects (name, description, category_id, project_type, ticket_number, ticket_date)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (
-        data['name'],
-        data.get('description', ''),
-        data.get('category_id') or None,
-        data.get('project_type', ''),
-        data.get('ticket_number', ''),
-        data.get('ticket_date', '')
-    ))
-    conn.commit()
-    project_id = cursor.lastrowid
-    conn.close()
-    return jsonify({'success': True, 'id': project_id}), 201
-
-
-@app.route('/api/projects/<int:project_id>', methods=['PUT'])
-def update_project(project_id):
-    data = request.json
-    conn = get_db()
-    conn.execute('''
-        UPDATE projects SET
-            name=?, description=?, category_id=?, project_type=?,
-            ticket_number=?, ticket_date=?,
-            cadrage_status=?, cadrage_start=?, cadrage_end=?,
-            recette_status=?, recette_start=?, recette_end=?,
-            preprod_status=?, preprod_start=?, preprod_end=?,
-            mep_status=?, mep_start=?, mep_end=?
-        WHERE id=?
-    ''', (
-        data['name'], data.get('description', ''),
-        data.get('category_id') or None, data.get('project_type', ''),
-        data.get('ticket_number', ''), data.get('ticket_date', ''),
-        data.get('cadrage_status', 'Non démarré'),
-        data.get('cadrage_start', ''), data.get('cadrage_end', ''),
-        data.get('recette_status', 'Non démarré'),
-        data.get('recette_start', ''), data.get('recette_end', ''),
-        data.get('preprod_status', 'Non démarré'),
-        data.get('preprod_start', ''), data.get('preprod_end', ''),
-        data.get('mep_status', 'Non démarré'),
-        data.get('mep_start', ''), data.get('mep_end', ''),
-        project_id
-    ))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-@app.route('/api/projects/<int:project_id>', methods=['DELETE'])
-def delete_project(project_id):
-    conn = get_db()
-    conn.execute('DELETE FROM members WHERE project_id = ?', (project_id,))
-    conn.execute('DELETE FROM dqas WHERE project_id = ?', (project_id,))
-    conn.execute('DELETE FROM formations WHERE project_id = ?', (project_id,))
-    conn.execute('DELETE FROM projects WHERE id = ?', (project_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-# === API INTERVENANTS ===
-
-@app.route('/api/projects/<int:project_id>/members', methods=['POST'])
-def add_member(project_id):
-    data = request.json
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO members (project_id, name, role) VALUES (?, ?, ?)',
-        (project_id, data['name'], data.get('role', ''))
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True}), 201
-
-
-@app.route('/api/members/<int:member_id>', methods=['DELETE'])
-def delete_member(member_id):
-    conn = get_db()
-    conn.execute('DELETE FROM members WHERE id = ?', (member_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-# === API DQA ===
-
-@app.route('/api/projects/<int:project_id>/dqas', methods=['POST'])
-def add_dqa(project_id):
-    data = request.json
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO dqas (project_id, status, date) VALUES (?, ?, ?)',
-        (project_id, data.get('status', 'En cours'), data.get('date', ''))
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True}), 201
-
-
-@app.route('/api/dqas/<int:dqa_id>', methods=['DELETE'])
-def delete_dqa(dqa_id):
-    conn = get_db()
-    conn.execute('DELETE FROM dqas WHERE id = ?', (dqa_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-# === API FORMATIONS ===
-
-@app.route('/api/projects/<int:project_id>/formations', methods=['POST'])
-def add_formation(project_id):
-    data = request.json
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO formations (project_id, type, date) VALUES (?, ?, ?)',
-        (project_id, data.get('type', 'Outil'), data.get('date', ''))
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True}), 201
-
-
-@app.route('/api/formations/<int:formation_id>', methods=['DELETE'])
-def delete_formation(formation_id):
-    conn = get_db()
-    conn.execute('DELETE FROM formations WHERE id = ?', (formation_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
-
-
-# === API VUE SEMAINE ===
-
-@app.route('/api/projects/week', methods=['GET'])
-def get_week_projects():
-    """Retourne les projets ayant une date dans la semaine spécifiée."""
-    offset = int(request.args.get('offset', 0))
-
-    today = datetime.now().date()
-    monday = today - timedelta(days=today.weekday()) + timedelta(weeks=offset)
-    friday = monday + timedelta(days=4)
-
-    monday_str = monday.isoformat()
-    friday_str = friday.isoformat()
-
-    conn = get_db()
-    projects = conn.execute('''
-        SELECT p.*, c.name as category_name
-        FROM projects p
-        LEFT JOIN categories c ON p.category_id = c.id
-        WHERE
-            (p.cadrage_start BETWEEN ? AND ?) OR (p.cadrage_end BETWEEN ? AND ?) OR
-            (p.recette_start BETWEEN ? AND ?) OR (p.recette_end BETWEEN ? AND ?) OR
-            (p.preprod_start BETWEEN ? AND ?) OR (p.preprod_end BETWEEN ? AND ?) OR
-            (p.mep_start BETWEEN ? AND ?) OR (p.mep_end BETWEEN ? AND ?) OR
-            (p.ticket_date BETWEEN ? AND ?)
-        ORDER BY p.name
-    ''', (
-        monday_str, friday_str, monday_str, friday_str,
-        monday_str, friday_str, monday_str, friday_str,
-        monday_str, friday_str, monday_str, friday_str,
-        monday_str, friday_str, monday_str, friday_str,
-        monday_str, friday_str
-    )).fetchall()
-
-    result = []
-    for p in projects:
-        project = dict(p)
-        members = conn.execute(
-            'SELECT * FROM members WHERE project_id = ?', (p['id'],)
-        ).fetchall()
-        project['members'] = [dict(m) for m in members]
-        dqas = conn.execute(
-            'SELECT * FROM dqas WHERE project_id = ? AND date BETWEEN ? AND ?',
-            (p['id'], monday_str, friday_str)
-        ).fetchall()
-        project['dqas'] = [dict(d) for d in dqas]
-        formations = conn.execute(
-            'SELECT * FROM formations WHERE project_id = ? AND date BETWEEN ? AND ?',
-            (p['id'], monday_str, friday_str)
-        ).fetchall()
-        project['formations'] = [dict(f) for f in formations]
-        result.append(project)
-
-    conn.close()
-    return jsonify({
-        'projects': result,
-        'monday': monday_str,
-        'friday': friday_str
-    })
-
-
-# === LANCEMENT ===
-
-if __name__ == '__main__':
-    check_lock()
-    create_lock()
-    atexit.register(remove_lock)
-    init_db()
-    print(f"\n✅ Application lancée sur http://localhost:5000\n")
-    app.run(debug=True, host='0.0.0.0', port=5000, use_reloader=False)
+            process = subprocess.Popen(
+                [sys.executable, "-m", "pip", "install", "--no-index", path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            for line in process.stdout:
+                self._log(line.rstrip())
+            process.wait()
+            if process.returncode == 0:
+                self._log("Installation réussie.")
+                self.after(0, self._load_packages)
+            else:
+                self._log(f"Echec de l'installation (code {process.returncode}).")
+        except Exception as e:
+            self._log(f"Exception : {e}")
+
+    # ── Journal ─────────────────────────────────────────────────────────────
+
+    def _log(self, message):
+        def _append():
+            self.log_text.configure(state=tk.NORMAL)
+            self.log_text.insert(tk.END, message + "\n")
+            self.log_text.see(tk.END)
+            self.log_text.configure(state=tk.DISABLED)
+        self.after(0, _append)
+
+
+if __name__ == "__main__":
+    app = PackageManagerApp()
+    app.mainloop()

@@ -1,2 +1,1 @@
-
-flask>=3.0
+# Aucune dépendance externe — tkinter est inclus dans Python standard
