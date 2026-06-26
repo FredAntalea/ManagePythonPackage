@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import importlib.metadata
 import os
 import re
@@ -19,53 +19,36 @@ def _normalize(name):
 
 
 def _parse_whl(filename):
-    """Extrait nom, version et tags depuis le nom de fichier wheel.
-    Format : name-version(-build)?-pytag-abitag-platformtag.whl
-    """
-    parts = filename[:-4].split("-")  # retire .whl
+    parts = filename[:-4].split("-")
     name = parts[0].replace("_", "-") if parts else filename
     version = parts[1] if len(parts) >= 2 else "?"
-    py_tag = parts[2] if len(parts) >= 3 else ""
+    py_tag  = parts[2] if len(parts) >= 3 else ""
     abi_tag = parts[3] if len(parts) >= 4 else ""
     plat_tag = parts[4] if len(parts) >= 5 else ""
     return name, version, py_tag, abi_tag, plat_tag
 
 
 def _check_wheel_compat(py_tag, abi_tag, plat_tag, target_python_version):
-    """Retourne (compatible: bool, raison: str).
-    target_python_version : ex. '3.12.4'
-    """
     if not target_python_version or target_python_version == "?":
         return True, ""
-
-    # py3-none-any ou py2.py3-none-any → toujours compatible
     if plat_tag == "any" and abi_tag == "none":
         return True, ""
-
-    # Tag CPython ex. cp312, cp314
     m = re.match(r"cp(\d)(\d+)", py_tag)
     if m:
-        wheel_major = int(m.group(1))
-        wheel_minor = int(m.group(2))
+        wheel_major, wheel_minor = int(m.group(1)), int(m.group(2))
         try:
             p = target_python_version.split(".")
-            target_major = int(p[0])
-            target_minor = int(p[1])
+            tgt_major, tgt_minor = int(p[0]), int(p[1])
         except (IndexError, ValueError):
             return True, ""
-        if wheel_major != target_major or wheel_minor != target_minor:
-            return False, f"Requiert Python {wheel_major}.{wheel_minor}, cible {target_major}.{target_minor}"
-
-    # Vérification plateforme basique
+        if wheel_major != tgt_major or wheel_minor != tgt_minor:
+            return False, f"Requiert Python {wheel_major}.{wheel_minor}, cible {tgt_major}.{tgt_minor}"
     if plat_tag and plat_tag != "any":
         import platform as _plat
-        is_win = sys.platform == "win32"
-        is_64 = _plat.machine().endswith("64")
-        if "win" in plat_tag and not is_win:
+        if "win" in plat_tag and sys.platform != "win32":
             return False, "Wheel Windows sur système non-Windows"
-        if "win32" in plat_tag and is_64:
+        if "win32" in plat_tag and _plat.machine().endswith("64"):
             return False, "Wheel 32-bit sur système 64-bit"
-
     return True, ""
 
 
@@ -89,43 +72,6 @@ def get_system_packages():
     return result
 
 
-def find_venvs(base=USERS_DIR):
-    venvs = []
-    try:
-        for root, dirs, files in os.walk(base):
-            if "pyvenv.cfg" in files:
-                cfg_path = os.path.join(root, "pyvenv.cfg")
-                info = _read_pyvenv_cfg(cfg_path)
-                pip_exe = os.path.join(root, "Scripts", "pip.exe")
-                python_exe = os.path.join(root, "Scripts", "python.exe")
-                if os.path.isfile(python_exe):
-                    venvs.append({
-                        "path": root,
-                        "name": os.path.basename(root),
-                        "python_version": info.get("version", "?"),
-                        "system_site": info.get("include-system-site-packages", "false").lower() == "true",
-                        "pip_exe": pip_exe if os.path.isfile(pip_exe) else None,
-                        "python_exe": python_exe,
-                    })
-                dirs[:] = [d for d in dirs if d not in {"Lib", "Scripts", "Include", "lib", "bin", "include"}]
-    except PermissionError:
-        pass
-    return venvs
-
-
-def _read_pyvenv_cfg(path):
-    info = {}
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if "=" in line:
-                    key, _, val = line.partition("=")
-                    info[key.strip().lower()] = val.strip()
-    except OSError:
-        pass
-    return info
-
-
 def get_venv_packages(pip_exe):
     result = {}
     try:
@@ -142,6 +88,64 @@ def get_venv_packages(pip_exe):
     return result
 
 
+def find_venvs(base=USERS_DIR):
+    venvs = []
+    try:
+        for root, dirs, files in os.walk(base):
+            if "pyvenv.cfg" in files:
+                info = _read_pyvenv_cfg(os.path.join(root, "pyvenv.cfg"))
+                pip_exe = os.path.join(root, "Scripts", "pip.exe")
+                python_exe = os.path.join(root, "Scripts", "python.exe")
+                if os.path.isfile(python_exe):
+                    venvs.append({
+                        "path": root,
+                        "name": os.path.basename(root),
+                        "python_version": info.get("version", "?"),
+                        "system_site": info.get("include-system-site-packages", "false").lower() == "true",
+                        "pip_exe": pip_exe if os.path.isfile(pip_exe) else None,
+                        "python_exe": python_exe,
+                    })
+                dirs[:] = [d for d in dirs if d not in
+                           {"Lib", "Scripts", "Include", "lib", "bin", "include"}]
+    except PermissionError:
+        pass
+    return venvs
+
+
+def _read_pyvenv_cfg(path):
+    info = {}
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if "=" in line:
+                    k, _, v = line.partition("=")
+                    info[k.strip().lower()] = v.strip()
+    except OSError:
+        pass
+    return info
+
+
+def detect_python_installs():
+    """Détecte les versions Python disponibles via le Python Launcher Windows."""
+    versions = []
+    try:
+        out = subprocess.check_output(
+            ["py", "-0"], stderr=subprocess.STDOUT, text=True
+        )
+        for line in out.splitlines():
+            line = line.strip().lstrip("*").strip()
+            m = re.match(r"(-V:[\d.]+|[\d.]+)", line)
+            if m:
+                tag = line.split()[0].lstrip("*").strip()
+                versions.append(tag)
+    except Exception:
+        pass
+    # Fallback : Python courant
+    if not versions:
+        versions.append(f"-{sys.version_info.major}.{sys.version_info.minor}")
+    return versions
+
+
 # ── Panneau comparaison + installation ──────────────────────────────────────
 
 class ComparePanel(tk.Frame):
@@ -156,28 +160,27 @@ class ComparePanel(tk.Frame):
 
     def _build(self):
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)   # tableau prend tout l'espace
+        # row 1 = boutons fixes
+        # row 2 = résumé fixe
 
-        top = tk.Frame(self)
-        top.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        tk.Label(top, text="Rechercher :").pack(side=tk.LEFT)
+        # Barre recherche + légende
+        search_bar = tk.Frame(self)
+        search_bar.grid(row=0, column=0, sticky="new", pady=(0, 2))
+        tk.Label(search_bar, text="Rechercher :").pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh_display())
-        tk.Entry(top, textvariable=self.search_var, width=25).pack(side=tk.LEFT, padx=4)
-
-        legend = tk.Frame(top)
+        tk.Entry(search_bar, textvariable=self.search_var, width=22).pack(side=tk.LEFT, padx=4)
+        legend = tk.Frame(search_bar)
         legend.pack(side=tk.RIGHT)
-        for color, label in [
-            ("#27ae60", "OK"),
-            ("#e67e22", "Différent"),
-            ("#e74c3c", "Absent"),
-            ("#999999", "Incompatible"),
-        ]:
+        for color, label in [("#27ae60", "OK"), ("#e67e22", "Différent"),
+                              ("#e74c3c", "Absent"), ("#999999", "Incompatible")]:
             tk.Label(legend, text="■", fg=color, font=("Helvetica", 11)).pack(side=tk.LEFT)
-            tk.Label(legend, text=label, font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 6))
+            tk.Label(legend, text=label, font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 5))
 
+        # Panneau gauche/droite
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=5)
-        paned.grid(row=1, column=0, sticky="nsew")
+        paned.grid(row=0, column=0, sticky="nsew", pady=(22, 0))
 
         left = tk.LabelFrame(paned, text="Packages installés", padx=4, pady=4)
         paned.add(left, stretch="always")
@@ -187,27 +190,27 @@ class ComparePanel(tk.Frame):
 
         right = tk.LabelFrame(paned, text="Packages disponibles dans packages/", padx=4, pady=4)
         paned.add(right, stretch="always")
-
         self.cmp_tree = self._make_tree(
             right,
             ("Fichier .whl", "Dispo", "Installé", "Statut", "Note"),
-            widths={"Fichier .whl": 200, "Dispo": 80, "Installé": 80, "Statut": 70, "Note": 160}
+            widths={"Fichier .whl": 210, "Dispo": 75, "Installé": 75, "Statut": 75, "Note": 170}
         )
         self.cmp_count = tk.StringVar()
         tk.Label(right, textvariable=self.cmp_count, anchor="w", fg="#555").pack(fill=tk.X)
 
-        btn_frame = tk.Frame(right)
-        btn_frame.pack(fill=tk.X, pady=(4, 0))
-        tk.Button(btn_frame, text="Installer / MAJ le sélectionné",
+        # Boutons toujours visibles (row fixe sous le paned)
+        btn_bar = tk.Frame(self, pady=4)
+        btn_bar.grid(row=1, column=0, sticky="ew")
+        tk.Button(btn_bar, text="Installer / MAJ le sélectionné",
                   bg="#2980b9", fg="white", font=("Helvetica", 9, "bold"),
-                  command=self._install_selected).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Button(btn_frame, text="Installer tous les absents/différents",
+                  command=self._install_selected).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Button(btn_bar, text="Installer tous les absents / différents",
                   bg="#8e44ad", fg="white", font=("Helvetica", 9, "bold"),
                   command=self._install_all_missing).pack(side=tk.LEFT)
 
         self.summary_var = tk.StringVar()
         tk.Label(self, textvariable=self.summary_var, anchor="w",
-                 fg="#333", font=("Helvetica", 9)).grid(row=2, column=0, sticky="w", pady=(2, 0))
+                 fg="#333", font=("Helvetica", 9)).grid(row=2, column=0, sticky="w")
 
     def _make_tree(self, parent, columns, widths=None):
         frame = tk.Frame(parent)
@@ -239,7 +242,6 @@ class ComparePanel(tk.Frame):
 
         self.cmp_tree.delete(*self.cmp_tree.get_children())
         ok = diff = missing = incompat = 0
-
         for name, ver_dispo, filename, compat, compat_reason in self._whls:
             if query and query not in name.lower() and query not in filename.lower():
                 continue
@@ -258,7 +260,6 @@ class ComparePanel(tk.Frame):
                 else:
                     statut, color = "Différent", "#e67e22"
                     diff += 1
-
             iid = self.cmp_tree.insert("", tk.END,
                                        values=(filename, ver_dispo, inst_ver, statut, note))
             self.cmp_tree.tag_configure(color, foreground=color)
@@ -280,7 +281,8 @@ class ComparePanel(tk.Frame):
             messagebox.showerror("Incompatible", f"Ce wheel n'est pas compatible :\n{vals[4]}")
             return
         if statut == "OK":
-            if not messagebox.askyesno("Déjà installé", "Ce package est déjà à jour. Réinstaller quand même ?"):
+            if not messagebox.askyesno("Déjà installé",
+                                       "Ce package est déjà à jour. Réinstaller quand même ?"):
                 return
         self._run_install([os.path.join(PACKAGES_DIR, filename)])
 
@@ -291,15 +293,17 @@ class ComparePanel(tk.Frame):
             if vals[3] in ("Absent", "Différent"):
                 paths.append(os.path.join(PACKAGES_DIR, vals[0]))
         if not paths:
-            messagebox.showinfo("Rien à faire", "Tous les packages compatibles sont à jour.")
+            messagebox.showinfo("Rien à faire", "Tous les packages compatibles sont déjà à jour.")
             return
-        if not messagebox.askyesno("Confirmation", f"Installer / mettre à jour {len(paths)} package(s) ?"):
+        if not messagebox.askyesno("Confirmation",
+                                   f"Installer / mettre à jour {len(paths)} package(s) ?"):
             return
         self._run_install(paths)
 
     def _run_install(self, paths):
         if not self._pip_exe:
-            messagebox.showerror("Pip introuvable", "Impossible de trouver pip pour cet environnement.")
+            messagebox.showerror("Pip introuvable",
+                                 "Impossible de trouver pip pour cet environnement.")
             return
         threading.Thread(target=self._do_install, args=(paths,), daemon=True).start()
 
@@ -317,7 +321,7 @@ class ComparePanel(tk.Frame):
                 if proc.returncode == 0:
                     self._log(f"✓ {os.path.basename(path)} installé.")
                 else:
-                    self._log(f"✗ Erreur pour {os.path.basename(path)} (code {proc.returncode}).")
+                    self._log(f"✗ Erreur (code {proc.returncode}).")
             except Exception as e:
                 self._log(f"✗ Exception : {e}")
         self._log("— Terminé —")
@@ -337,12 +341,11 @@ class PackageManagerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Gestionnaire de Packages Python")
-        self.geometry("1150x780")
+        self.geometry("1150x820")
         self.resizable(True, True)
-        self._whls = []
         self._venvs = []
         self._build_ui()
-        self._load_all()
+        self._load_system()
 
     def _build_ui(self):
         header = tk.Frame(self, bg="#2c3e50", pady=8)
@@ -350,85 +353,158 @@ class PackageManagerApp(tk.Tk):
         tk.Label(header, text="Gestionnaire de Packages Python",
                  font=("Helvetica", 14, "bold"), fg="white", bg="#2c3e50").pack()
 
-        # Découpage vertical : onglets (haut, poids 3) + journal (bas, poids 1)
-        main_frame = tk.Frame(self)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        main_frame.rowconfigure(0, weight=3)
-        main_frame.rowconfigure(1, weight=1)
-        main_frame.columnconfigure(0, weight=1)
+        # PanedWindow vertical : onglets (haut) / journal (bas)
+        vpaned = tk.PanedWindow(self, orient=tk.VERTICAL, sashwidth=6)
+        vpaned.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
 
-        # Onglets
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=0, column=0, sticky="nsew", padx=8, pady=(6, 2))
+        # ── Onglets ──────────────────────────────────────────────────────────
+        nb_frame = tk.Frame(vpaned)
+        vpaned.add(nb_frame, stretch="always", minsize=400)
+        nb_frame.rowconfigure(0, weight=1)
+        nb_frame.columnconfigure(0, weight=1)
 
-        # Onglet 1 — Système
+        self.notebook = ttk.Notebook(nb_frame)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+
+        # Onglet 1 — Python système
         tab_sys = tk.Frame(self.notebook)
         self.notebook.add(tab_sys, text="  Python système  ")
+        tab_sys.rowconfigure(1, weight=1)
+        tab_sys.columnconfigure(0, weight=1)
 
-        sys_top = tk.Frame(tab_sys)
-        sys_top.pack(fill=tk.X, padx=6, pady=(6, 2))
-        tk.Button(sys_top, text="Rafraîchir", command=self._reload_system).pack(side=tk.LEFT)
+        sys_bar = tk.Frame(tab_sys, pady=4)
+        sys_bar.grid(row=0, column=0, sticky="ew", padx=6)
+        tk.Button(sys_bar, text="Rafraîchir", command=self._load_system).pack(side=tk.LEFT)
         self.sys_info = tk.StringVar()
-        tk.Label(sys_top, textvariable=self.sys_info, fg="#555").pack(side=tk.LEFT, padx=10)
+        tk.Label(sys_bar, textvariable=self.sys_info, fg="#555").pack(side=tk.LEFT, padx=10)
 
         self.sys_panel = ComparePanel(tab_sys, self._log)
-        self.sys_panel.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self.sys_panel.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 4))
 
-        # Onglet 2 — Venvs
+        # Onglet 2 — Environnements virtuels
         tab_venv = tk.Frame(self.notebook)
         self.notebook.add(tab_venv, text="  Environnements virtuels  ")
+        tab_venv.rowconfigure(1, weight=1)
+        tab_venv.columnconfigure(0, weight=1)
 
-        venv_top = tk.Frame(tab_venv)
-        venv_top.pack(fill=tk.X, padx=6, pady=(6, 2))
-        tk.Button(venv_top, text="Scanner C:\\Users\\",
+        venv_bar = tk.Frame(tab_venv, pady=4)
+        venv_bar.grid(row=0, column=0, sticky="ew", padx=6)
+        tk.Button(venv_bar, text="Scanner C:\\Users\\",
                   command=self._scan_venvs).pack(side=tk.LEFT)
         self.venv_status = tk.StringVar(value="Cliquez sur Scanner pour détecter les venvs.")
-        tk.Label(venv_top, textvariable=self.venv_status, fg="#555").pack(side=tk.LEFT, padx=10)
+        tk.Label(venv_bar, textvariable=self.venv_status, fg="#555").pack(side=tk.LEFT, padx=10)
 
-        venv_list_frame = tk.LabelFrame(tab_venv, text="Venvs détectés", padx=4, pady=4)
-        venv_list_frame.pack(fill=tk.X, padx=6, pady=(0, 4))
+        # PanedWindow vertical dans l'onglet : liste venvs (haut) / comparaison (bas)
+        venv_vpaned = tk.PanedWindow(tab_venv, orient=tk.VERTICAL, sashwidth=5)
+        venv_vpaned.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 4))
+
+        list_frame = tk.LabelFrame(venv_vpaned, text="Venvs détectés", padx=4, pady=4)
+        venv_vpaned.add(list_frame, stretch="never", minsize=100)
 
         cols = ("Nom", "Chemin", "Python", "Héritage global")
-        self.venv_tree = ttk.Treeview(venv_list_frame, columns=cols,
+        self.venv_tree = ttk.Treeview(list_frame, columns=cols,
                                       show="headings", height=4, selectmode="browse")
-        self.venv_tree.heading("Nom", text="Nom")
-        self.venv_tree.heading("Chemin", text="Chemin")
-        self.venv_tree.heading("Python", text="Python")
-        self.venv_tree.heading("Héritage global", text="Héritage global")
-        self.venv_tree.column("Nom", width=180)
-        self.venv_tree.column("Chemin", width=420)
-        self.venv_tree.column("Python", width=80)
-        self.venv_tree.column("Héritage global", width=130)
-        venv_sb = ttk.Scrollbar(venv_list_frame, orient=tk.VERTICAL, command=self.venv_tree.yview)
-        self.venv_tree.configure(yscrollcommand=venv_sb.set)
-        self.venv_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        venv_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        for col, w in zip(cols, [180, 430, 80, 130]):
+            self.venv_tree.heading(col, text=col)
+            self.venv_tree.column(col, width=w)
+        vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.venv_tree.yview)
+        self.venv_tree.configure(yscrollcommand=vsb.set)
+        self.venv_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.venv_tree.bind("<<TreeviewSelect>>", self._on_venv_select)
 
-        self.venv_panel = ComparePanel(tab_venv, self._log)
-        self.venv_panel.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        cmp_frame = tk.Frame(venv_vpaned)
+        venv_vpaned.add(cmp_frame, stretch="always", minsize=200)
+        cmp_frame.rowconfigure(0, weight=1)
+        cmp_frame.columnconfigure(0, weight=1)
+        self.venv_panel = ComparePanel(cmp_frame, self._log)
+        self.venv_panel.grid(row=0, column=0, sticky="nsew")
 
-        # Journal — grande zone redimensionnable en bas
-        log_frame = tk.LabelFrame(main_frame, text="Journal", padx=6, pady=4)
-        log_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 6))
+        # Onglet 3 — Créer un venv
+        tab_create = tk.Frame(self.notebook)
+        self.notebook.add(tab_create, text="  Créer un environnement virtuel  ")
+        self._build_create_tab(tab_create)
+
+        # ── Journal ──────────────────────────────────────────────────────────
+        log_frame = tk.LabelFrame(vpaned, text="Journal", padx=6, pady=4)
+        vpaned.add(log_frame, stretch="never", minsize=120)
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
-        self.log_text = tk.Text(
-            log_frame, state=tk.DISABLED,
-            bg="#1e1e1e", fg="#d4d4d4", font=("Courier", 9)
-        )
+        self.log_text = tk.Text(log_frame, state=tk.DISABLED,
+                                bg="#1e1e1e", fg="#d4d4d4", font=("Courier", 9))
         log_sb = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_sb.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_sb.grid(row=0, column=1, sticky="ns")
 
-    # ── Chargement ────────────────────────────────────────────────────────────
+    def _build_create_tab(self, parent):
+        parent.columnconfigure(1, weight=1)
 
-    def _load_all(self):
-        self._reload_system()
+        # Titre explicatif
+        tk.Label(parent, text="Créer un nouvel environnement virtuel Python",
+                 font=("Helvetica", 11, "bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 4))
+        tk.Label(parent,
+                 text="L'environnement sera créé à partir d'une version Python déjà installée sur ce poste.",
+                 fg="#555").grid(row=1, column=0, columnspan=3, sticky="w", padx=12, pady=(0, 12))
 
-    def _reload_system(self):
+        # Version Python
+        tk.Label(parent, text="Version Python :").grid(row=2, column=0, sticky="w", padx=12, pady=4)
+        self.py_version_var = tk.StringVar()
+        self.py_combo = ttk.Combobox(parent, textvariable=self.py_version_var,
+                                     state="readonly", width=20)
+        self.py_combo.grid(row=2, column=1, sticky="w", padx=4)
+        tk.Button(parent, text="Détecter", command=self._detect_pythons).grid(
+            row=2, column=2, padx=8)
+
+        # Nom du venv
+        tk.Label(parent, text="Nom du venv :").grid(row=3, column=0, sticky="w", padx=12, pady=4)
+        self.venv_name_var = tk.StringVar(value="mon-venv")
+        tk.Entry(parent, textvariable=self.venv_name_var, width=30).grid(
+            row=3, column=1, sticky="w", padx=4)
+
+        # Dossier parent
+        tk.Label(parent, text="Dossier de destination :").grid(
+            row=4, column=0, sticky="w", padx=12, pady=4)
+        self.venv_dir_var = tk.StringVar(value=os.path.expanduser("~"))
+        tk.Entry(parent, textvariable=self.venv_dir_var, width=50).grid(
+            row=4, column=1, sticky="ew", padx=4)
+        tk.Button(parent, text="Parcourir…", command=self._browse_venv_dir).grid(
+            row=4, column=2, padx=8)
+
+        # Option héritage global
+        self.system_site_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(parent, text="Hériter des packages globaux (--system-site-packages)",
+                       variable=self.system_site_var).grid(
+            row=5, column=0, columnspan=3, sticky="w", padx=12, pady=4)
+
+        # Chemin résultant (aperçu)
+        tk.Label(parent, text="Chemin final :").grid(row=6, column=0, sticky="w", padx=12, pady=4)
+        self.venv_preview_var = tk.StringVar()
+        tk.Label(parent, textvariable=self.venv_preview_var, fg="#2980b9").grid(
+            row=6, column=1, columnspan=2, sticky="w", padx=4)
+
+        def _update_preview(*_):
+            d = self.venv_dir_var.get().strip()
+            n = self.venv_name_var.get().strip()
+            self.venv_preview_var.set(os.path.join(d, n) if d and n else "")
+        self.venv_dir_var.trace_add("write", _update_preview)
+        self.venv_name_var.trace_add("write", _update_preview)
+        _update_preview()
+
+        # Bouton créer
+        tk.Button(parent, text="Créer le venv",
+                  bg="#27ae60", fg="white", font=("Helvetica", 11, "bold"),
+                  command=self._create_venv).grid(
+            row=7, column=0, columnspan=3, pady=16)
+
+        # Lancer la détection automatiquement
+        self.after(500, self._detect_pythons)
+
+    # ── Python système ────────────────────────────────────────────────────────
+
+    def _load_system(self):
         self._log("Chargement des packages système…")
         installed = get_system_packages()
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -439,6 +515,8 @@ class PackageManagerApp(tk.Tk):
         self.sys_panel.load(installed, whls, pip_exe)
         self.sys_info.set(f"Python {py_ver}  —  {len(installed)} packages")
         self._log(f"Système : {len(installed)} packages, {len(whls)} .whl disponibles.")
+
+    # ── Venvs ─────────────────────────────────────────────────────────────────
 
     def _scan_venvs(self):
         self.venv_status.set("Scan en cours…")
@@ -463,11 +541,10 @@ class PackageManagerApp(tk.Tk):
         sel = self.venv_tree.selection()
         if not sel:
             return
-        path = sel[0]
-        venv = next((v for v in self._venvs if v["path"] == path), None)
+        venv = next((v for v in self._venvs if v["path"] == sel[0]), None)
         if not venv:
             return
-        self._log(f"Chargement des packages de : {venv['name']}…")
+        self._log(f"Chargement : {venv['name']} (Python {venv['python_version']})…")
         threading.Thread(target=self._load_venv_packages, args=(venv,), daemon=True).start()
 
     def _load_venv_packages(self, venv):
@@ -478,9 +555,82 @@ class PackageManagerApp(tk.Tk):
         whls = get_local_whls(target_python_version=venv["python_version"])
         self.after(0, lambda: self.venv_panel.load(installed, whls, venv["pip_exe"]))
         self.after(0, lambda: self._log(
-            f"{venv['name']} : {len(installed)} packages (Python {venv['python_version']}) — "
+            f"{venv['name']} : {len(installed)} packages — "
             f"{'hérite du global' if venv['system_site'] else 'isolé'}"
         ))
+
+    # ── Créer un venv ─────────────────────────────────────────────────────────
+
+    def _detect_pythons(self):
+        self._log("Détection des versions Python installées…")
+        threading.Thread(target=self._do_detect_pythons, daemon=True).start()
+
+    def _do_detect_pythons(self):
+        versions = detect_python_installs()
+        self.after(0, lambda: self._set_python_versions(versions))
+
+    def _set_python_versions(self, versions):
+        self.py_combo["values"] = versions
+        if versions:
+            self.py_combo.current(0)
+            self._log(f"Versions Python détectées : {', '.join(versions)}")
+        else:
+            self._log("Aucune version Python détectée via le Python Launcher.")
+
+    def _browse_venv_dir(self):
+        d = filedialog.askdirectory(title="Choisir le dossier de destination")
+        if d:
+            self.venv_dir_var.set(d)
+
+    def _create_venv(self):
+        py_ver = self.py_version_var.get().strip()
+        name = self.venv_name_var.get().strip()
+        dest = self.venv_dir_var.get().strip()
+
+        if not py_ver:
+            messagebox.showwarning("Version manquante",
+                                   "Sélectionnez une version Python (cliquez sur Détecter).")
+            return
+        if not name:
+            messagebox.showwarning("Nom manquant", "Saisissez un nom pour le venv.")
+            return
+        if not dest:
+            messagebox.showwarning("Dossier manquant", "Choisissez un dossier de destination.")
+            return
+
+        venv_path = os.path.join(dest, name)
+        if os.path.exists(venv_path):
+            messagebox.showerror("Existe déjà",
+                                 f"Un dossier existe déjà à :\n{venv_path}")
+            return
+
+        cmd = ["py", py_ver, "-m", "venv", venv_path]
+        if self.system_site_var.get():
+            cmd.append("--system-site-packages")
+
+        self._log(f"Création du venv : {venv_path}")
+        self._log(f"Commande : {' '.join(cmd)}")
+        threading.Thread(target=self._do_create_venv,
+                         args=(cmd, venv_path), daemon=True).start()
+
+    def _do_create_venv(self, cmd, venv_path):
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            for line in proc.stdout:
+                self._log(line.rstrip())
+            proc.wait()
+            if proc.returncode == 0:
+                self._log(f"✓ Venv créé : {venv_path}")
+                self.after(0, lambda: messagebox.showinfo(
+                    "Venv créé", f"Environnement virtuel créé avec succès :\n{venv_path}"))
+            else:
+                self._log(f"✗ Erreur lors de la création (code {proc.returncode}).")
+        except FileNotFoundError:
+            self._log("✗ Python Launcher (py) introuvable. Vérifiez que Python est installé.")
+        except Exception as e:
+            self._log(f"✗ Exception : {e}")
 
     # ── Journal ───────────────────────────────────────────────────────────────
 
