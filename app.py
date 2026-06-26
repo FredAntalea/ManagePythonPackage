@@ -160,13 +160,14 @@ class ComparePanel(tk.Frame):
 
     def _build(self):
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)   # tableau prend tout l'espace
-        # row 1 = boutons fixes
-        # row 2 = résumé fixe
+        self.rowconfigure(1, weight=1)   # row 1 = tableau (expansible)
+        # row 0 = recherche/légende fixe
+        # row 2 = boutons fixes
+        # row 3 = résumé fixe
 
         # Barre recherche + légende
         search_bar = tk.Frame(self)
-        search_bar.grid(row=0, column=0, sticky="new", pady=(0, 2))
+        search_bar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         tk.Label(search_bar, text="Rechercher :").pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh_display())
@@ -180,7 +181,7 @@ class ComparePanel(tk.Frame):
 
         # Panneau gauche/droite
         paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, sashwidth=5)
-        paned.grid(row=0, column=0, sticky="nsew", pady=(22, 0))
+        paned.grid(row=1, column=0, sticky="nsew")
 
         left = tk.LabelFrame(paned, text="Packages installés", padx=4, pady=4)
         paned.add(left, stretch="always")
@@ -200,7 +201,7 @@ class ComparePanel(tk.Frame):
 
         # Boutons toujours visibles (row fixe sous le paned)
         btn_bar = tk.Frame(self, pady=4)
-        btn_bar.grid(row=1, column=0, sticky="ew")
+        btn_bar.grid(row=2, column=0, sticky="ew")
         tk.Button(btn_bar, text="Installer / MAJ le sélectionné",
                   bg="#2980b9", fg="white", font=("Helvetica", 9, "bold"),
                   command=self._install_selected).pack(side=tk.LEFT, padx=(0, 8))
@@ -210,7 +211,7 @@ class ComparePanel(tk.Frame):
 
         self.summary_var = tk.StringVar()
         tk.Label(self, textvariable=self.summary_var, anchor="w",
-                 fg="#333", font=("Helvetica", 9)).grid(row=2, column=0, sticky="w")
+                 fg="#333", font=("Helvetica", 9)).grid(row=3, column=0, sticky="w")
 
     def _make_tree(self, parent, columns, widths=None):
         frame = tk.Frame(parent)
