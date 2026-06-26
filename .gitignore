@@ -1,0 +1,8 @@
+        app.py
+        lancer.bat
+        packages/
+        projets.db
+        projets.db-shm
+        projets.db-wal
+        requirements.txt
+        templates/

@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suivi de Projets</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; color: #333; }
+
+        /* Header et navigation */
+        header { background: linear-gradient(135deg, #1a5276, #2980b9); color: white; padding: 1.5rem 2rem; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .tabs { display: flex; gap: 0.5rem; margin-top: 1rem; }
+        .tab { padding: 0.6rem 1.2rem; background: rgba(255,255,255,0.15); border: none; color: white; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.95rem; transition: background 0.2s; }
+        .tab:hover { background: rgba(255,255,255,0.25); }
+        .tab.active { background: #f0f2f5; color: #333; font-weight: 600; }
+
+        /* Contenu principal */
+        .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+        .view { display: none; }
+        .view.active { display: block; }
+
+        /* Formulaires et contrôles */
+        .controls { background: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .controls h3 { margin-bottom: 1rem; color: #1a5276; }
+        .form-row { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.8rem; }
+        input, select, textarea { padding: 0.5rem 0.8rem; border: 1px solid #ddd; border-radius: 6px; font-size: 0.9rem; }
+        input:focus, select:focus, textarea:focus { outline: none; border-color: #2980b9; box-shadow: 0 0 0 2px rgba(41,128,185,0.15); }
+        textarea { resize: vertical; min-height: 60px; }
+        button { padding: 0.5rem 1rem; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; transition: all 0.2s; }
+        .btn-primary { background: #2980b9; color: white; }
+        .btn-primary:hover { background: #1a6fa3; }
+        .btn-danger { background: #e74c3c; color: white; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-secondary { background: #95a5a6; color: white; }
+        .btn-secondary:hover { background: #7f8c8d; }
+        .btn-small { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+
+        /* Filtres */
+        .filters { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; padding: 1rem; background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .filters label { font-weight: 600; font-size: 0.85rem; color: #555; }
+
+        /* Cartes projets */
+        .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 1.2rem; }
+        .project-card { background: white; border-radius: 10px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #2980b9; transition: transform 0.2s, box-shadow 0.2s; }
+        .project-card:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .project-card.completed { opacity: 0.6; border-left-color: #27ae60; }
+        .project-card h4 { color: #1a5276; margin-bottom: 0.3rem; font-size: 1.1rem; }
+        .project-card .category-badge { display: inline-block; background: #eaf2f8; color: #2980b9; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.75rem; margin-bottom: 0.5rem; }
+        .project-card .type-badge { display: inline-block; background: #f4ecf7; color: #8e44ad; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.75rem; margin-bottom: 0.5rem; }
+        .project-card .description { color: #666; font-size: 0.85rem; margin-bottom: 0.8rem; }
+
+        /* Ticket */
+        .ticket-info { background: #fef9e7; padding: 0.5rem 0.8rem; border-radius: 6px; margin-bottom: 0.8rem; font-size: 0.85rem; border: 1px solid #f9e79f; }
+        .ticket-info strong { color: #7d6608; }
+
+        /* Phases */
+        .phases-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-bottom: 0.8rem; }
+        .phase-item { text-align: center; padding: 0.5rem 0.3rem; border-radius: 6px; font-size: 0.75rem; }
+        .phase-item .phase-name { font-weight: 700; margin-bottom: 0.3rem; }
+        .phase-item .phase-dates { font-size: 0.7rem; color: #555; margin-top: 0.2rem; }
+        .phase-item.non-demarre { background: #f8f9fa; color: #6c757d; }
+        .phase-item.en-cours { background: #fff3cd; color: #856404; }
+        .phase-item.termine { background: #d4edda; color: #155724; }
+        .phase-item.bloque { background: #f8d7da; color: #721c24; }
+
+        /* DQA et Formations */
+        .section-block { margin-bottom: 0.8rem; padding: 0.6rem; background: #f8f9fa; border-radius: 6px; }
+        .section-block h5 { font-size: 0.8rem; color: #555; margin-bottom: 0.4rem; }
+        .section-block .group-title { font-size: 0.75rem; font-weight: 600; color: #2980b9; margin-top: 0.3rem; }
+        .section-block .item-date { font-size: 0.75rem; color: #666; padding-left: 0.5rem; }
+        .dqa-validee { color: #155724; }
+        .dqa-ko { color: #721c24; }
+        .dqa-encours { color: #856404; }
+
+        /* Intervenants */
+        .contributors { margin-top: 0.5rem; }
+        .contributor-tag { display: inline-block; background: #eaf2f8; color: #2980b9; padding: 0.2rem 0.5rem; border-radius: 10px; font-size: 0.75rem; margin: 0.2rem 0.2rem 0.2rem 0; }
+        .contributor-tag .role { color: #666; font-style: italic; }
+
+        /* Actions */
+        .card-actions { display: flex; gap: 0.5rem; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid #eee; }
+
+        /* Modal */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: white; border-radius: 12px; padding: 2rem; max-width: 700px; width: 90%; max-height: 85vh; overflow-y: auto; }
+        .modal h3 { color: #1a5276; margin-bottom: 1.5rem; }
+        .modal-section { margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
+        .modal-section h4 { color: #555; margin-bottom: 0.8rem; font-size: 0.95rem; }
+        .modal .form-row { margin-bottom: 0.6rem; }
+        .modal label { font-weight: 600; font-size: 0.85rem; min-width: 100px; color: #555; }
+        .modal input, .modal select { flex: 1; }
+        .modal-actions { display: flex; gap: 0.8rem; justify-content: flex-end; margin-top: 1.5rem; }
+
+        /* Liste dans le modal */
+        .list-items { margin-top: 0.5rem; }
+        .list-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem; padding: 0.3rem 0.5rem; background: #f8f9fa; border-radius: 4px; font-size: 0.85rem; }
+        .list-item .item-text { flex: 1; }
+
+        /* Vue Semaine */
+        .week-nav { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+        .week-nav h3 { flex: 1; text-align: center; color: #1a5276; }
+        .week-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.8rem; }
+        .day-column { background: white; border-radius: 10px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); min-height: 200px; }
+        .day-column.today { border: 2px solid #f39c12; background: #fffef5; }
+        .day-column h4 { text-align: center; color: #1a5276; margin-bottom: 0.8rem; padding-bottom: 0.5rem; border-bottom: 2px solid #eee; font-size: 0.9rem; }
+        .day-event { padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 6px; font-size: 0.8rem; border-left: 3px solid #2980b9; background: #f8f9fa; }
+        .day-event .event-project { font-weight: 600; color: #1a5276; }
+        .day-event .event-phase { color: #666; font-size: 0.75rem; }
+        .day-event .event-contributors { margin-top: 0.3rem; }
+        .day-event .event-contributor { display: inline-block; background: #eaf2f8; color: #2980b9; padding: 0.1rem 0.4rem; border-radius: 8px; font-size: 0.7rem; margin-right: 0.2rem; }
+
+        /* Vue Projet (Kanban) */
+        .kanban-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+        .kanban-column { background: white; border-radius: 10px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); min-height: 300px; }
+        .kanban-column h4 { text-align: center; color: white; padding: 0.6rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.95rem; }
+        .kanban-column:nth-child(1) h4 { background: #3498db; }
+        .kanban-column:nth-child(2) h4 { background: #f39c12; }
+        .kanban-column:nth-child(3) h4 { background: #9b59b6; }
+        .kanban-column:nth-child(4) h4 { background: #27ae60; }
+        .kanban-card { padding: 0.8rem; margin-bottom: 0.6rem; background: #f8f9fa; border-radius: 6px; border-left: 3px solid #2980b9; font-size: 0.85rem; }
+        .kanban-card .kanban-project-name { font-weight: 600; color: #1a5276; }
+        .kanban-card .kanban-category { font-size: 0.75rem; color: #666; }
+        .kanban-card .kanban-type { font-size: 0.75rem; color: #8e44ad; }
+        .kanban-card .kanban-contributors { margin-top: 0.3rem; }
+
+        /* Bouton projets terminés */
+        .toggle-completed { margin-top: 1.5rem; text-align: center; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .projects-grid { grid-template-columns: 1fr; }
+            .week-grid { grid-template-columns: 1fr; }
+            .kanban-grid { grid-template-columns: 1fr; }
+            .phases-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📋 Suivi de Projets</h1>
+        <div class="tabs">
+            <button class="tab active" onclick="switchView('projects')">📁 Projets</button>
+            <button class="tab" onclick="switchView('week')">📅 Vue Semaine</button>
+            <button class="tab" onclick="switchView('kanban')">🔀 Vue Projet</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- ============================================================= -->
+        <!-- VUE PROJETS -->
+        <!-- ============================================================= -->
+        <div id="view-projects" class="view active">
+            <!-- FLGE -->
+            <div class="controls">
+                <h3>FLGE</h3>
+                <div class="form-row">
+                    <input type="text" id="category-name" placeholder="Nom de la FLGE">
+                    <button class="btn-primary" onclick="createCategory()">Ajouter</button>
+                </div>
+                <div id="categories-list" class="form-row" style="margin-top: 0.5rem; flex-wrap: wrap;"></div>
+            </div>
+
+            <!-- Nouveau projet -->
+            <div class="controls">
+                <h3>Nouveau projet</h3>
+                <div class="form-row">
+                    <input type="text" id="project-name" placeholder="Nom du projet" style="flex:2;">
+                    <select id="project-category" style="flex:1;">
+                        <option value="">-- FLGE --</option>
+                    </select>
+                    <select id="project-type" style="flex:1;">
+                        <option value="">-- Type --</option>
+                        <option value="Trust">Trust</option>
+                        <option value="FOL IHM">FOL IHM</option>
+                        <option value="API FOL">API FOL</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <input type="text" id="project-ticket-number" placeholder="N° de ticket">
+                    <input type="date" id="project-ticket-date" title="Date du ticket">
+                </div>
+                <div class="form-row">
+                    <textarea id="project-description" placeholder="Description (optionnel)" style="flex:1;"></textarea>
+                </div>
+                <div class="form-row">
+                    <button class="btn-primary" onclick="createProject()">Créer le projet</button>
+                </div>
+            </div>
+
+            <!-- Filtres -->
+            <div class="filters">
+                <label>Filtrer :</label>
+                <select id="filter-category" onchange="renderProjects()">
+                    <option value="">Toutes les FLGE</option>
+                </select>
+                <select id="filter-phase" onchange="renderProjects()">
+                    <option value="">Toutes les phases</option>
+                    <option value="Cadrage">Cadrage</option>
+                    <option value="Recette">Recette</option>
+                    <option value="Pré-Production">Pré-Production</option>
+                    <option value="MEP">MEP</option>
+                </select>
+                <input type="text" id="filter-search" placeholder="Rechercher..." oninput="renderProjects()">
+            </div>
+
+            <!-- Liste des projets -->
+            <div id="projects-grid" class="projects-grid"></div>
+
+            <!-- Bouton projets terminés -->
+            <div class="toggle-completed">
+                <button class="btn-secondary" id="toggle-completed-btn" onclick="toggleCompleted()">
+                    Afficher les projets terminés
+                </button>
+            </div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- VUE SEMAINE -->
+        <!-- ============================================================= -->
+        <div id="view-week" class="view">
+            <div class="filters">
+                <label>Filtrer par intervenant :</label>
+                <select id="filter-week-contributor" onchange="loadWeek()">
+                    <option value="">Tous les intervenants</option>
+                </select>
+            </div>
+            <div class="week-nav">
+                <button class="btn-primary" onclick="changeWeek(-1)">◀ Précédente</button>
+                <h3 id="week-title"></h3>
+                <button class="btn-secondary" onclick="changeWeek(0)">Aujourd'hui</button>
+                <button class="btn-primary" onclick="changeWeek(1)">Suivante ▶</button>
+            </div>
+            <div id="week-grid" class="week-grid"></div>
+        </div>
+
+        <!-- ============================================================= -->
+        <!-- VUE PROJET (KANBAN) -->
+        <!-- ============================================================= -->
+        <div id="view-kanban" class="view">
+            <div class="kanban-grid">
+                <div class="kanban-column">
+                    <h4>📐 Cadrage</h4>
+                    <div id="kanban-cadrage"></div>
+                </div>
+                <div class="kanban-column">
+                    <h4>🧪 Recette</h4>
+                    <div id="kanban-recette"></div>
+                </div>
+                <div class="kanban-column">
+                    <h4>🔧 Pré-Production</h4>
+                    <div id="kanban-preprod"></div>
+                </div>
+                <div class="kanban-column">
+                    <h4>🚀 MEP</h4>
+                    <div id="kanban-mep"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- MODAL MODIFICATION -->
+    <!-- ============================================================= -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <h3 id="modal-title">Modifier le projet</h3>
+
+            <div class="modal-section">
+                <h4>Informations générales</h4>
+                <div class="form-row">
+                    <label>Nom</label>
+                    <input type="text" id="edit-name">
+                </div>
+                <div class="form-row">
+                    <label>FLGE</label>
+                    <select id="edit-category"></select>
+                </div>
+                <div class="form-row">
+                    <label>Type</label>
+                    <select id="edit-project-type">
+                        <option value="">-- Type --</option>
+                        <option value="Trust">Trust</option>
+                        <option value="FOL IHM">FOL IHM</option>
+                        <option value="API FOL">API FOL</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>Description</label>
+                    <input type="text" id="edit-description">
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <h4>Ticket</h4>
+                <div class="form-row">
+                    <label>N° Ticket</label>
+                    <input type="text" id="edit-ticket-number">
+                </div>
+                <div class="form-row">
+                    <label>Date</label>
+                    <input type="date" id="edit-ticket-date">
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <h4>Phases</h4>
+                <div class="form-row">
+                    <label>Cadrage</label>
+                    <select id="edit-cadrage-status">
+                        <option value="Non démarré">Non démarré</option>
+                        <option value="En cours">En cours</option>
+                        <option value="Terminé">Terminé</option>
+                        <option value="Bloqué">Bloqué</option>
+                    </select>
+                    <input type="date" id="edit-cadrage-start" title="Début">
+                    <input type="date" id="edit-cadrage-end" title="Fin">
+                </div>
+                <div class="form-row">
+                    <label>Recette</label>
+                    <select id="edit-recette-status">
+                        <option value="Non démarré">Non démarré</option>
+                        <option value="En cours">En cours</option>
+                        <option value="Terminé">Terminé</option>
+                        <option value="Bloqué">Bloqué</option>
+                    </select>
+                    <input type="date" id="edit-recette-start" title="Début">
+                    <input type="date" id="edit-recette-end" title="Fin">
+                </div>
+                <div class="form-row">
+                    <label>Pré-Prod</label>
+                    <select id="edit-preprod-status">
+                        <option value="Non démarré">Non démarré</option>
+                        <option value="En cours">En cours</option>
+                        <option value="Terminé">Terminé</option>
+                        <option value="Bloqué">Bloqué</option>
+                    </select>
+                    <input type="date" id="edit-preprod-start" title="Début">
+                    <input type="date" id="edit-preprod-end" title="Fin">
+                </div>
+                <div class="form-row">
+                    <label>MEP</label>
+                    <select id="edit-mep-status">
+                        <option value="Non démarré">Non démarré</option>
+                        <option value="En cours">En cours</option>
+                        <option value="Terminé">Terminé</option>
+                        <option value="Bloqué">Bloqué</option>
+                    </select>
+                    <input type="date" id="edit-mep-start" title="Début">
+                    <input type="date" id="edit-mep-end" title="Fin">
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <h4>DQA</h4>
+                <div id="edit-dqa-list" class="list-items"></div>
+                <div class="form-row">
+                    <select id="new-dqa-status">
+                        <option value="En cours">En cours</option>
+                        <option value="Validée">Validée</option>
+                        <option value="KO">KO</option>
+                    </select>
+                    <input type="date" id="new-dqa-date">
+                    <button class="btn-primary btn-small" onclick="addDqa()">+ Ajouter DQA</button>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <h4>Formations</h4>
+                <div id="edit-formation-list" class="list-items"></div>
+                <div class="form-row">
+                    <select id="new-formation-type">
+                        <option value="Sanctions">Sanctions</option>
+                        <option value="PEP">PEP</option>
+                        <option value="Outil">Outil</option>
+                    </select>
+                    <input type="date" id="new-formation-date">
+                    <button class="btn-primary btn-small" onclick="addFormation()">+ Ajouter Formation</button>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <h4>Intervenants</h4>
+                <div id="edit-members-list" class="list-items"></div>
+                <div class="form-row">
+                    <input type="text" id="new-member-name" placeholder="Nom">
+                    <input type="text" id="new-member-role" placeholder="Rôle">
+                    <button class="btn-primary btn-small" onclick="addMember()">+ Ajouter</button>
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeModal()">Fermer</button>
+                <button class="btn-primary" onclick="saveProject()">Enregistrer</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =================================================================
+        // État global
+        // =================================================================
+        let projects = [];
+        let categories = [];
+        let currentProjectId = null;
+        let weekOffset = 0;
+        let showCompleted = false;
+
+        // =================================================================
+        // Initialisation
+        // =================================================================
+        document.addEventListener('DOMContentLoaded', () => {
+            loadCategories();
+            loadProjects();
+        });
+
+        // =================================================================
+        // Navigation
+        // =================================================================
+        function switchView(view) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(`view-${view}`).classList.add('active');
+            event.target.classList.add('active');
+
+            if (view === 'week') loadWeek();
+            if (view === 'kanban') renderKanban();
+        }
+
+        // =================================================================
+        // FLGE (Catégories)
+        // =================================================================
+        async function loadCategories() {
+            const res = await fetch('/api/categories');
+            categories = await res.json();
+            renderCategoriesList();
+            updateCategorySelects();
+        }
+
+        function renderCategoriesList() {
+            const list = document.getElementById('categories-list');
+            list.innerHTML = categories.map(c => `
+                <span class="contributor-tag">
+                    ${c.name}
+                    <button class="btn-danger btn-small" onclick="deleteCategory(${c.id})" style="margin-left:0.3rem;padding:0.1rem 0.3rem;">×</button>
+                </span>
+            `).join('');
+        }
+
+        function updateCategorySelects() {
+            const options = '<option value="">-- FLGE --</option>' +
+                categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            document.getElementById('project-category').innerHTML = options;
+            document.getElementById('edit-category').innerHTML = options;
+            document.getElementById('filter-category').innerHTML =
+                '<option value="">Toutes les FLGE</option>' +
+                categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        }
+
+        async function createCategory() {
+            const name = document.getElementById('category-name').value.trim();
+            if (!name) return;
+            await fetch('/api/categories', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name})
+            });
+            document.getElementById('category-name').value = '';
+            loadCategories();
+        }
+
+        async function deleteCategory(id) {
+            if (!confirm('Supprimer cette FLGE ?')) return;
+            await fetch(`/api/categories/${id}`, {method: 'DELETE'});
+            loadCategories();
+            loadProjects();
+        }
+
+        // =================================================================
+        // Projets
+        // =================================================================
+        async function loadProjects() {
+            const res = await fetch('/api/projects');
+            projects = await res.json();
+            renderProjects();
+            updateMemberFilter();
+        }
+
+        async function createProject() {
+            const name = document.getElementById('project-name').value.trim();
+            if (!name) return;
+            await fetch('/api/projects', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name,
+                    description: document.getElementById('project-description').value.trim(),
+                    category_id: document.getElementById('project-category').value || null,
+                    project_type: document.getElementById('project-type').value,
+                    ticket_number: document.getElementById('project-ticket-number').value.trim(),
+                    ticket_date: document.getElementById('project-ticket-date').value
+                })
+            });
+            document.getElementById('project-name').value = '';
+            document.getElementById('project-description').value = '';
+            document.getElementById('project-category').value = '';
+            document.getElementById('project-type').value = '';
+            document.getElementById('project-ticket-number').value = '';
+            document.getElementById('project-ticket-date').value = '';
+            loadProjects();
+        }
+
+        async function deleteProject(id) {
+            if (!confirm('Supprimer ce projet ?')) return;
+            await fetch(`/api/projects/${id}`, {method: 'DELETE'});
+            loadProjects();
+        }
+
+        function renderProjects() {
+            const grid = document.getElementById('projects-grid');
+            const filterCat = document.getElementById('filter-category').value;
+            const filterPhase = document.getElementById('filter-phase').value;
+            const filterSearch = document.getElementById('filter-search').value.toLowerCase();
+
+            let filtered = projects.filter(p => {
+                // Masquer les terminés ou afficher uniquement les terminés
+                if (!showCompleted && p.mep_status === 'Terminé') return false;
+                if (showCompleted && p.mep_status !== 'Terminé') return false;
+
+                if (filterCat && p.category_id != filterCat) return false;
+                if (filterPhase) {
+                    const currentPhase = getCurrentPhase(p);
+                    if (currentPhase !== filterPhase) return false;
+                }
+                if (filterSearch) {
+                    const searchStr = `${p.name} ${p.description} ${p.ticket_number} ${p.project_type}`.toLowerCase();
+                    if (!searchStr.includes(filterSearch)) return false;
+                }
+                return true;
+            });
+
+            grid.innerHTML = filtered.map(p => renderProjectCard(p)).join('');
+
+            // Logique du bouton projets terminés
+            const completedCount = projects.filter(p => p.mep_status === 'Terminé').length;
+            const btn = document.getElementById('toggle-completed-btn');
+            if (showCompleted) {
+                btn.textContent = `Revenir aux projets en cours`;
+                btn.style.display = 'inline-block';
+            } else {
+                btn.textContent = `Afficher les projets terminés (${completedCount})`;
+                btn.style.display = completedCount > 0 ? 'inline-block' : 'none';
+            }
+        }
+
+        function toggleCompleted() {
+            showCompleted = !showCompleted;
+            renderProjects();
+        }
+
+        function getCurrentPhase(p) {
+            if (p.mep_status === 'En cours' || p.mep_status === 'Bloqué') return 'MEP';
+            if (p.preprod_status === 'En cours' || p.preprod_status === 'Bloqué') return 'Pré-Production';
+            if (p.recette_status === 'En cours' || p.recette_status === 'Bloqué') return 'Recette';
+            if (p.cadrage_status === 'En cours' || p.cadrage_status === 'Bloqué') return 'Cadrage';
+            if (p.preprod_status === 'Terminé') return 'MEP';
+            if (p.recette_status === 'Terminé') return 'Pré-Production';
+            if (p.cadrage_status === 'Terminé') return 'Recette';
+            return 'Cadrage';
+        }
+
+        function renderProjectCard(p) {
+            const isCompleted = p.mep_status === 'Terminé';
+            const statusClass = (status) => {
+                if (status === 'Terminé') return 'termine';
+                if (status === 'En cours') return 'en-cours';
+                if (status === 'Bloqué') return 'bloque';
+                return 'non-demarre';
+            };
+
+            const formatDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', {day:'2-digit', month:'short'}) : '';
+            const phaseDates = (start, end) => {
+                if (!start && !end) return '';
+                let str = '<div class="phase-dates">';
+                if (start) str += formatDate(start);
+                if (start && end) str += ' → ';
+                if (end) str += formatDate(end);
+                str += '</div>';
+                return str;
+            };
+
+            // DQA groupées par statut
+            let dqaHtml = '';
+            if (p.dqas && p.dqas.length > 0) {
+                dqaHtml = '<div class="section-block"><h5>🔍 DQA</h5>';
+                const grouped = {};
+                p.dqas.forEach(d => {
+                    if (!grouped[d.status]) grouped[d.status] = [];
+                    grouped[d.status].push(d);
+                });
+                for (const [status, items] of Object.entries(grouped)) {
+                    const cssClass = status === 'Validée' ? 'dqa-validee' : status === 'KO' ? 'dqa-ko' : 'dqa-encours';
+                    dqaHtml += `<div class="group-title ${cssClass}">${status}</div>`;
+                    items.forEach(d => {
+                        dqaHtml += `<div class="item-date">${d.date ? formatDate(d.date) : 'Pas de date'}</div>`;
+                    });
+                }
+                dqaHtml += '</div>';
+            }
+
+            // Formations groupées par type
+            let formationHtml = '';
+            if (p.formations && p.formations.length > 0) {
+                formationHtml = '<div class="section-block"><h5>🎓 Formations</h5>';
+                const grouped = {};
+                p.formations.forEach(f => {
+                    if (!grouped[f.type]) grouped[f.type] = [];
+                    grouped[f.type].push(f);
+                });
+                for (const [type, items] of Object.entries(grouped)) {
+                    formationHtml += `<div class="group-title">${type}</div>`;
+                    items.forEach(f => {
+                        formationHtml += `<div class="item-date">${f.date ? formatDate(f.date) : 'Pas de date'}</div>`;
+                    });
+                }
+                formationHtml += '</div>';
+            }
+
+            // Intervenants
+            let membersHtml = '';
+            if (p.members && p.members.length > 0) {
+                membersHtml = '<div class="contributors">' +
+                    p.members.map(m => `<span class="contributor-tag">${m.name}${m.role ? ` <span class="role">(${m.role})</span>` : ''}</span>`).join('') +
+                    '</div>';
+            }
+
+            return `
+                <div class="project-card ${isCompleted ? 'completed' : ''}">
+                    <h4>${p.name}</h4>
+                    ${p.category_name ? `<span class="category-badge">${p.category_name}</span>` : ''}
+                    ${p.project_type ? `<span class="type-badge">${p.project_type}</span>` : ''}
+                    ${p.description ? `<div class="description">${p.description}</div>` : ''}
+                    ${(p.ticket_number || p.ticket_date) ? `
+                        <div class="ticket-info">
+                            <strong>🎫 Ticket :</strong>
+                            ${p.ticket_number ? p.ticket_number : ''}
+                            ${p.ticket_date ? ` — ${formatDate(p.ticket_date)}` : ''}
+                        </div>
+                    ` : ''}
+                    <div class="phases-grid">
+                        <div class="phase-item ${statusClass(p.cadrage_status)}">
+                            <div class="phase-name">Cadrage</div>
+                            <div>${p.cadrage_status}</div>
+                            ${phaseDates(p.cadrage_start, p.cadrage_end)}
+                        </div>
+                        <div class="phase-item ${statusClass(p.recette_status)}">
+                            <div class="phase-name">Recette</div>
+                            <div>${p.recette_status}</div>
+                            ${phaseDates(p.recette_start, p.recette_end)}
+                        </div>
+                        <div class="phase-item ${statusClass(p.preprod_status)}">
+                            <div class="phase-name">Pré-Prod</div>
+                            <div>${p.preprod_status}</div>
+                            ${phaseDates(p.preprod_start, p.preprod_end)}
+                        </div>
+                        <div class="phase-item ${statusClass(p.mep_status)}">
+                            <div class="phase-name">MEP</div>
+                            <div>${p.mep_status}</div>
+                            ${phaseDates(p.mep_start, p.mep_end)}
+                        </div>
+                    </div>
+                    ${dqaHtml}
+                    ${formationHtml}
+                    ${membersHtml}
+                    <div class="card-actions">
+                        <button class="btn-primary btn-small" onclick="openModal(${p.id})">✏️ Modifier</button>
+                        <button class="btn-danger btn-small" onclick="deleteProject(${p.id})">🗑️ Supprimer</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // =================================================================
+        // Modal de modification
+        // =================================================================
+        function openModal(projectId) {
+            currentProjectId = projectId;
+            const p = projects.find(proj => proj.id === projectId);
+            if (!p) return;
+
+            document.getElementById('modal-title').textContent = `Modifier : ${p.name}`;
+            document.getElementById('edit-name').value = p.name;
+            document.getElementById('edit-category').value = p.category_id || '';
+            document.getElementById('edit-project-type').value = p.project_type || '';
+            document.getElementById('edit-description').value = p.description || '';
+            document.getElementById('edit-ticket-number').value = p.ticket_number || '';
+            document.getElementById('edit-ticket-date').value = p.ticket_date || '';
+
+            // Phases
+            document.getElementById('edit-cadrage-status').value = p.cadrage_status;
+            document.getElementById('edit-cadrage-start').value = p.cadrage_start || '';
+            document.getElementById('edit-cadrage-end').value = p.cadrage_end || '';
+            document.getElementById('edit-recette-status').value = p.recette_status;
+            document.getElementById('edit-recette-start').value = p.recette_start || '';
+            document.getElementById('edit-recette-end').value = p.recette_end || '';
+            document.getElementById('edit-preprod-status').value = p.preprod_status;
+            document.getElementById('edit-preprod-start').value = p.preprod_start || '';
+            document.getElementById('edit-preprod-end').value = p.preprod_end || '';
+            document.getElementById('edit-mep-status').value = p.mep_status;
+            document.getElementById('edit-mep-start').value = p.mep_start || '';
+            document.getElementById('edit-mep-end').value = p.mep_end || '';
+
+            // Listes
+            renderDqaList(p.dqas || []);
+            renderFormationList(p.formations || []);
+            renderMembersList(p.members || []);
+
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modal-overlay').classList.remove('active');
+            currentProjectId = null;
+        }
+
+        async function saveProject() {
+            const data = {
+                name: document.getElementById('edit-name').value.trim(),
+                category_id: document.getElementById('edit-category').value || null,
+                project_type: document.getElementById('edit-project-type').value,
+                description: document.getElementById('edit-description').value.trim(),
+                ticket_number: document.getElementById('edit-ticket-number').value.trim(),
+                ticket_date: document.getElementById('edit-ticket-date').value,
+                cadrage_status: document.getElementById('edit-cadrage-status').value,
+                cadrage_start: document.getElementById('edit-cadrage-start').value,
+                cadrage_end: document.getElementById('edit-cadrage-end').value,
+                recette_status: document.getElementById('edit-recette-status').value,
+                recette_start: document.getElementById('edit-recette-start').value,
+                recette_end: document.getElementById('edit-recette-end').value,
+                preprod_status: document.getElementById('edit-preprod-status').value,
+                preprod_start: document.getElementById('edit-preprod-start').value,
+                preprod_end: document.getElementById('edit-preprod-end').value,
+                mep_status: document.getElementById('edit-mep-status').value,
+                mep_start: document.getElementById('edit-mep-start').value,
+                mep_end: document.getElementById('edit-mep-end').value
+            };
+
+            if (!data.name) return alert('Le nom est obligatoire');
+
+            await fetch(`/api/projects/${currentProjectId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            closeModal();
+            loadProjects();
+        }
+
+        // =================================================================
+        // DQA
+        // =================================================================
+        function renderDqaList(dqas) {
+            const container = document.getElementById('edit-dqa-list');
+            container.innerHTML = dqas.map(d => `
+                <div class="list-item">
+                    <span class="item-text"><strong>${d.status}</strong> — ${d.date || 'Pas de date'}</span>
+                    <button class="btn-danger btn-small" onclick="deleteDqa(${d.id})">×</button>
+                </div>
+            `).join('');
+        }
+
+        async function addDqa() {
+            const status = document.getElementById('new-dqa-status').value;
+            const date = document.getElementById('new-dqa-date').value;
+            await fetch(`/api/projects/${currentProjectId}/dqas`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({status, date})
+            });
+            document.getElementById('new-dqa-date').value = '';
+            await loadProjects();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            renderDqaList(p.dqas || []);
+        }
+
+        async function deleteDqa(id) {
+            await fetch(`/api/dqas/${id}`, {method: 'DELETE'});
+            await loadProjects();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            renderDqaList(p.dqas || []);
+        }
+
+        // =================================================================
+        // Formations
+        // =================================================================
+        function renderFormationList(formations) {
+            const container = document.getElementById('edit-formation-list');
+            container.innerHTML = formations.map(f => `
+                <div class="list-item">
+                    <span class="item-text"><strong>${f.type}</strong> — ${f.date || 'Pas de date'}</span>
+                    <button class="btn-danger btn-small" onclick="deleteFormation(${f.id})">×</button>
+                </div>
+            `).join('');
+        }
+
+        async function addFormation() {
+            const type = document.getElementById('new-formation-type').value;
+            const date = document.getElementById('new-formation-date').value;
+            await fetch(`/api/projects/${currentProjectId}/formations`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({type, date})
+            });
+            document.getElementById('new-formation-date').value = '';
+            await loadProjects();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            renderFormationList(p.formations || []);
+        }
+
+        async function deleteFormation(id) {
+            await fetch(`/api/formations/${id}`, {method: 'DELETE'});
+            await loadProjects();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            renderFormationList(p.formations || []);
+        }
+
+        // =================================================================
+        // Intervenants (Members)
+        // =================================================================
+        function renderMembersList(members) {
+            const container = document.getElementById('edit-members-list');
+            container.innerHTML = members.map(m => `
+                <div class="list-item">
+                    <span class="item-text">${m.name}${m.role ? ` (${m.role})` : ''}</span>
+                    <button class="btn-danger btn-small" onclick="deleteMember(${m.id})">×</button>
+                </div>
+            `).join('');
+        }
+
+        async function addMember() {
+            const name = document.getElementById('new-member-name').value.trim();
+            const role = document.getElementById('new-member-role').value.trim();
+            if (!name) return;
+            await fetch(`/api/projects/${currentProjectId}/members`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, role})
+            });
+            document.getElementById('new-member-name').value = '';
+            document.getElementById('new-member-role').value = '';
+            await loadProjects();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            renderMembersList(p.members || []);
+        }
+
+        async function deleteMember(id) {
+            await fetch(`/api/members/${id}`, {method: 'DELETE'});
+            await loadProjects();
+            const p = projects.find(proj => proj.id === currentProjectId);
+            renderMembersList(p.members || []);
+        }
+
+        // =================================================================
+        // Filtre intervenants (vue semaine)
+        // =================================================================
+        function updateMemberFilter() {
+            const allMembers = new Set();
+            projects.forEach(p => {
+                (p.members || []).forEach(m => allMembers.add(m.name));
+            });
+            const select = document.getElementById('filter-week-contributor');
+            const current = select.value;
+            select.innerHTML = '<option value="">Tous les intervenants</option>' +
+                [...allMembers].sort().map(name => `<option value="${name}">${name}</option>`).join('');
+            select.value = current;
+        }
+
+        // =================================================================
+        // Vue Semaine
+        // =================================================================
+        async function loadWeek() {
+            const res = await fetch(`/api/projects/week?offset=${weekOffset}`);
+            const data = await res.json();
+            const filterContrib = document.getElementById('filter-week-contributor').value;
+
+            const monday = new Date(data.monday);
+            const friday = new Date(data.friday);
+            const today = new Date().toISOString().split('T')[0];
+
+            document.getElementById('week-title').textContent =
+                `Semaine du ${monday.toLocaleDateString('fr-FR', {day:'2-digit', month:'long'})} au ${friday.toLocaleDateString('fr-FR', {day:'2-digit', month:'long', year:'numeric'})}`;
+
+            const days = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'];
+            let gridHtml = '';
+
+            for (let i = 0; i < 5; i++) {
+                const dayDate = new Date(monday);
+                dayDate.setDate(dayDate.getDate() + i);
+                const dayStr = dayDate.toISOString().split('T')[0];
+                const isToday = dayStr === today;
+
+                // Construire les événements pour ce jour à partir des projets
+                let dayEvents = [];
+                (data.projects || []).forEach(p => {
+                    // Filtrer par intervenant si nécessaire
+                    if (filterContrib && !(p.members || []).some(m => m.name === filterContrib)) return;
+
+                    const phases = [
+                        {name: 'Cadrage', status: p.cadrage_status, start: p.cadrage_start, end: p.cadrage_end},
+                        {name: 'Recette', status: p.recette_status, start: p.recette_start, end: p.recette_end},
+                        {name: 'Pré-Prod', status: p.preprod_status, start: p.preprod_start, end: p.preprod_end},
+                        {name: 'MEP', status: p.mep_status, start: p.mep_start, end: p.mep_end}
+                    ];
+
+                    phases.forEach(phase => {
+                        if (phase.start === dayStr || phase.end === dayStr) {
+                            dayEvents.push({project: p, phase: phase.name, status: phase.status, type: phase.start === dayStr ? 'Début' : 'Fin'});
+                        }
+                    });
+
+                    // Ticket
+                    if (p.ticket_date === dayStr) {
+                        dayEvents.push({project: p, phase: 'Ticket', status: p.ticket_number || '', type: 'Ticket'});
+                    }
+
+                    // DQA
+                    (p.dqas || []).forEach(d => {
+                        if (d.date === dayStr) {
+                            dayEvents.push({project: p, phase: `DQA (${d.status})`, status: d.status, type: 'DQA'});
+                        }
+                    });
+
+                    // Formations
+                    (p.formations || []).forEach(f => {
+                        if (f.date === dayStr) {
+                            dayEvents.push({project: p, phase: `Formation ${f.type}`, status: f.type, type: 'Formation'});
+                        }
+                    });
+                });
+
+                gridHtml += `
+                    <div class="day-column ${isToday ? 'today' : ''}">
+                        <h4>${days[i]}<br>${dayDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'short'})}</h4>
+                        ${dayEvents.map(e => `
+                            <div class="day-event">
+                                <div class="event-project">${e.project.name}</div>
+                                <div class="event-phase">${e.type} — ${e.phase}</div>
+                                ${(e.project.members || []).length > 0 ? `
+                                    <div class="event-contributors">
+                                        ${e.project.members.map(m => `<span class="event-contributor">${m.name}</span>`).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `).join('')}
+                        ${dayEvents.length === 0 ? '<p style="color:#aaa;text-align:center;font-size:0.8rem;margin-top:1rem;">Aucun événement</p>' : ''}
+                    </div>
+                `;
+            }
+
+            document.getElementById('week-grid').innerHTML = gridHtml;
+        }
+
+        function changeWeek(direction) {
+            if (direction === 0) weekOffset = 0;
+            else weekOffset += direction;
+            loadWeek();
+        }
+
+        // =================================================================
+        // Vue Kanban
+        // =================================================================
+        function renderKanban() {
+            const phases = {
+                'Cadrage': document.getElementById('kanban-cadrage'),
+                'Recette': document.getElementById('kanban-recette'),
+                'Pré-Production': document.getElementById('kanban-preprod'),
+                'MEP': document.getElementById('kanban-mep')
+            };
+
+            // Vider les colonnes
+            Object.values(phases).forEach(el => el.innerHTML = '');
+
+            // Filtrer les projets non terminés
+            const activeProjects = projects.filter(p => p.mep_status !== 'Terminé');
+
+            activeProjects.forEach(p => {
+                const phase = getCurrentPhase(p);
+                const container = phases[phase];
+                if (!container) return;
+
+                container.innerHTML += `
+                    <div class="kanban-card">
+                        <div class="kanban-project-name">${p.name}</div>
+                        ${p.category_name ? `<div class="kanban-category">${p.category_name}</div>` : ''}
+                        ${p.project_type ? `<div class="kanban-type">${p.project_type}</div>` : ''}
+                        ${p.members && p.members.length > 0 ? `
+                            <div class="kanban-contributors">
+                                ${p.members.map(m => `<span class="contributor-tag" style="font-size:0.7rem;">${m.name}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+
+            // Message si colonne vide
+            Object.values(phases).forEach(el => {
+                if (!el.innerHTML) {
+                    el.innerHTML = '<p style="color:#aaa;text-align:center;font-size:0.85rem;">Aucun projet</p>';
+                }
+            });
+        }
+    </script>
+</body>
+</html>
