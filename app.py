@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import threading
+import zipfile
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKAGES_DIR = os.path.join(BASE_DIR, "packages")
@@ -16,6 +17,72 @@ USERS_DIR = r"C:\Users"
 
 def _normalize(name):
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def read_whl_requires(whl_path):
+    """Lit les dépendances Requires-Dist depuis les métadonnées d'un .whl (zip)."""
+    requires = []
+    try:
+        with zipfile.ZipFile(whl_path, "r") as zf:
+            meta_files = [n for n in zf.namelist()
+                          if n.endswith(".dist-info/METADATA") or n.endswith(".dist-info/WHEEL")]
+            metadata_files = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+            if not metadata_files:
+                return requires
+            with zf.open(metadata_files[0]) as f:
+                for raw in f.read().decode("utf-8", errors="ignore").splitlines():
+                    if raw.startswith("Requires-Dist:"):
+                        dep = raw[len("Requires-Dist:"):].strip()
+                        # Ignorer les dépendances conditionnelles d'extras
+                        if 'extra ==' in dep:
+                            continue
+                        # Extraire juste le nom du package
+                        dep_name = re.split(r"[>=<!;\s\[]", dep)[0].strip()
+                        if dep_name:
+                            requires.append(_normalize(dep_name))
+    except Exception:
+        pass
+    return requires
+
+
+def resolve_install_order(paths):
+    """Trie les chemins .whl dans l'ordre des dépendances (topological sort).
+    Retourne (ordered_paths, warnings) où warnings liste les dépendances manquantes.
+    """
+    # Construire un index nom_normalisé -> path pour les wheels disponibles
+    name_to_path = {}
+    path_to_requires = {}
+    for path in paths:
+        filename = os.path.basename(path)
+        name, *_ = _parse_whl(filename)
+        norm = _normalize(name)
+        name_to_path[norm] = path
+        path_to_requires[path] = read_whl_requires(path)
+
+    warnings = []
+    visited = set()
+    ordered = []
+
+    def visit(path, stack=None):
+        if stack is None:
+            stack = set()
+        if path in visited:
+            return
+        if path in stack:
+            return  # cycle, on ignore
+        stack.add(path)
+        for dep_norm in path_to_requires.get(path, []):
+            if dep_norm in name_to_path:
+                visit(name_to_path[dep_norm], stack)
+            # Si la dépendance n'est pas dans les paths à installer, on ne warn pas
+            # (elle est peut-être déjà installée)
+        visited.add(path)
+        ordered.append(path)
+
+    for path in paths:
+        visit(path)
+
+    return ordered, warnings
 
 
 def _parse_whl(filename):
@@ -332,7 +399,27 @@ class ComparePanel(tk.Frame):
         return [self._pip_exe]            # ex. ["C:\...\pip.exe"]
 
     def _do_install(self, paths):
-        for path in paths:
+        # Résoudre l'ordre des dépendances
+        ordered, _ = resolve_install_order(paths)
+
+        # Vérifier les dépendances manquantes dans packages/
+        available_names = set()
+        if os.path.isdir(PACKAGES_DIR):
+            for f in os.listdir(PACKAGES_DIR):
+                if f.endswith(".whl"):
+                    n, *_ = _parse_whl(f)
+                    available_names.add(_normalize(n))
+
+        for path in ordered:
+            deps = read_whl_requires(path)
+            missing_deps = [d for d in deps
+                            if d not in available_names and d not in
+                            {_normalize(os.path.basename(p).split("-")[0].replace("_", "-"))
+                             for p in ordered}]
+            if missing_deps:
+                self._log(f"⚠ Dépendances peut-être manquantes pour "
+                          f"{os.path.basename(path)} : {', '.join(missing_deps)}")
+
             self._log(f"→ Installation : {os.path.basename(path)}")
             try:
                 cmd = self._pip_cmd() + ["install", "--no-index", path]
