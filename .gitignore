@@ -1,8 +1,17 @@
-        app.py
-        lancer.bat
-        packages/
-        projets.db
-        projets.db-shm
-        projets.db-wal
-        requirements.txt
-        templates/
+# Dossier de wheels locaux (contenu propre à chaque poste)
+packages/
+
+# Base de données obsolète (ancienne appli Flask)
+projets.db
+projets.db-shm
+projets.db-wal
+
+# Environnements virtuels
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
