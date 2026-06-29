@@ -518,20 +518,26 @@ class PackageManagerApp(tk.Tk):
         header = tk.Frame(self, bg="#2c3e50", pady=8)
         header.pack(fill=tk.X)
         tk.Label(header, text="Gestionnaire de Packages Python",
-                 font=("Helvetica", 14, "bold"), fg="white", bg="#2c3e50").pack()
+                 font=("Helvetica", 14, "bold"), fg="white", bg="#2c3e50").pack(side=tk.LEFT, padx=12)
+        self._log_btn = tk.Button(header, text="Journal",
+                                  bg="#34495e", fg="white", font=("Helvetica", 9),
+                                  relief=tk.FLAT, padx=8, command=self._toggle_journal)
+        self._log_btn.pack(side=tk.RIGHT, padx=12)
 
-        # PanedWindow vertical : onglets (haut) / journal (bas)
-        vpaned = tk.PanedWindow(self, orient=tk.VERTICAL, sashwidth=6)
-        vpaned.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-
-        # ── Onglets ──────────────────────────────────────────────────────────
-        nb_frame = tk.Frame(vpaned)
-        vpaned.add(nb_frame, stretch="always", minsize=400)
+        # Notebook plein écran
+        nb_frame = tk.Frame(self)
+        nb_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         nb_frame.rowconfigure(0, weight=1)
         nb_frame.columnconfigure(0, weight=1)
 
         self.notebook = ttk.Notebook(nb_frame)
         self.notebook.grid(row=0, column=0, sticky="nsew")
+
+        # Journal (caché par défaut)
+        self._log_visible = False
+        self._log_frame = tk.LabelFrame(self, text="Journal", padx=6, pady=4)
+        self._log_frame.rowconfigure(0, weight=1)
+        self._log_frame.columnconfigure(0, weight=1)
 
         # Onglet 1 — Python système
         tab_sys = tk.Frame(self.notebook)
@@ -598,15 +604,9 @@ class PackageManagerApp(tk.Tk):
         self.notebook.add(tab_create, text="  Créer un environnement virtuel  ")
         self._build_create_tab(tab_create)
 
-        # ── Journal ──────────────────────────────────────────────────────────
-        log_frame = tk.LabelFrame(vpaned, text="Journal", padx=6, pady=4)
-        vpaned.add(log_frame, stretch="never", minsize=120)
-        log_frame.rowconfigure(0, weight=1)
-        log_frame.columnconfigure(0, weight=1)
-
-        self.log_text = tk.Text(log_frame, state=tk.DISABLED,
-                                bg="#1e1e1e", fg="#d4d4d4", font=("Courier", 9))
-        log_sb = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text = tk.Text(self._log_frame, state=tk.DISABLED,
+                                bg="#1e1e1e", fg="#d4d4d4", font=("Courier", 9), height=8)
+        log_sb = ttk.Scrollbar(self._log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_sb.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_sb.grid(row=0, column=1, sticky="ns")
@@ -828,6 +828,16 @@ class PackageManagerApp(tk.Tk):
             self._log(f"✗ Exception : {e}")
 
     # ── Journal ───────────────────────────────────────────────────────────────
+
+    def _toggle_journal(self):
+        if self._log_visible:
+            self._log_frame.pack_forget()
+            self._log_visible = False
+            self._log_btn.configure(bg="#34495e")
+        else:
+            self._log_frame.pack(fill=tk.BOTH, padx=8, pady=(0, 6))
+            self._log_visible = True
+            self._log_btn.configure(bg="#e67e22")
 
     def _log(self, message):
         def _append():
