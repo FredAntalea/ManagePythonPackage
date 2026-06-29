@@ -122,12 +122,21 @@ def _check_wheel_compat(py_tag, abi_tag, plat_tag, target_python_version):
 def get_local_whls(target_python_version=""):
     if not os.path.isdir(PACKAGES_DIR):
         os.makedirs(PACKAGES_DIR)
-    items = []
+    # First pass: index all wheels with compat
+    all_whls = {}  # normalized_name -> (name, version, filename, compat, reason)
     for f in sorted(os.listdir(PACKAGES_DIR)):
         if f.endswith(".whl"):
             name, version, py_tag, abi_tag, plat_tag = _parse_whl(f)
             compat, reason = _check_wheel_compat(py_tag, abi_tag, plat_tag, target_python_version)
-            items.append((name, version, f, compat, reason))
+            all_whls[_normalize(name)] = (name, version, f, compat, reason)
+    # Second pass: add deps_in_packages for each wheel
+    items = []
+    for norm_name, (name, version, filename, compat, reason) in all_whls.items():
+        whl_path = os.path.join(PACKAGES_DIR, filename)
+        deps = read_whl_requires(whl_path)
+        deps_in_packages = [(dep, all_whls[dep][3]) for dep in deps if dep in all_whls]
+        items.append((name, version, filename, compat, reason, deps_in_packages))
+    items.sort(key=lambda x: x[2])
     return items
 
 
@@ -259,7 +268,8 @@ class ComparePanel(tk.Frame):
         legend = tk.Frame(search_bar)
         legend.pack(side=tk.RIGHT)
         for color, label in [("#27ae60", "OK"), ("#e67e22", "Différent"),
-                              ("#e74c3c", "Absent"), ("#999999", "Incompatible")]:
+                              ("#e74c3c", "Absent"), ("#999999", "Incompatible"),
+                              ("#8e44ad", "Bloqué")]:
             tk.Label(legend, text="■", fg=color, font=("Helvetica", 11)).pack(side=tk.LEFT)
             tk.Label(legend, text=label, font=("Helvetica", 8)).pack(side=tk.LEFT, padx=(0, 5))
 
@@ -277,8 +287,9 @@ class ComparePanel(tk.Frame):
         paned.add(right, stretch="always")
         self.cmp_tree = self._make_tree(
             right,
-            ("Fichier .whl", "Dispo", "Installé", "Statut", "Note"),
-            widths={"Fichier .whl": 210, "Dispo": 75, "Installé": 75, "Statut": 75, "Note": 170}
+            ("Fichier .whl", "Dispo", "Installé", "Statut", "Note", "Dépend de"),
+            widths={"Fichier .whl": 180, "Dispo": 65, "Installé": 65, "Statut": 70,
+                    "Note": 140, "Dépend de": 160}
         )
         self.cmp_count = tk.StringVar()
         tk.Label(right, textvariable=self.cmp_count, anchor="w", fg="#555").pack(fill=tk.X)
@@ -316,6 +327,26 @@ class ComparePanel(tk.Frame):
         self._pip_exe = pip_exe
         self.refresh_display()
 
+    def _topo_sort_whls(self, whls):
+        name_to_whl = {_normalize(w[0]): w for w in whls}
+        visited = set()
+        ordered = []
+
+        def visit(norm_name):
+            if norm_name in visited:
+                return
+            visited.add(norm_name)
+            whl = name_to_whl.get(norm_name)
+            if whl and len(whl) >= 6:
+                for dep_name, _ in whl[5]:
+                    visit(dep_name)
+            if whl:
+                ordered.append(whl)
+
+        for norm_name in list(name_to_whl.keys()):
+            visit(norm_name)
+        return ordered
+
     def refresh_display(self):
         query = self.search_var.get().lower()
 
@@ -326,13 +357,29 @@ class ComparePanel(tk.Frame):
         self.inst_count.set(f"{len(filtered)} package(s)")
 
         self.cmp_tree.delete(*self.cmp_tree.get_children())
-        ok = diff = missing = incompat = 0
-        for name, ver_dispo, filename, compat, compat_reason in self._whls:
+        ok = diff = missing = incompat = blocked = 0
+
+        for whl_data in self._topo_sort_whls(self._whls):
+            name, ver_dispo, filename = whl_data[0], whl_data[1], whl_data[2]
+            compat, compat_reason = whl_data[3], whl_data[4]
+            deps_in_packages = whl_data[5] if len(whl_data) >= 6 else []
+
             if query and query not in name.lower() and query not in filename.lower():
                 continue
+
+            deps_str = ", ".join(
+                f"{d} {'✓' if c else '✗'}" for d, c in deps_in_packages
+            ) if deps_in_packages else ""
+
+            has_blocked_dep = any(not c for _, c in deps_in_packages)
+
             if not compat:
                 statut, color, inst_ver, note = "Incompatible", "#999999", "—", compat_reason
                 incompat += 1
+            elif has_blocked_dep:
+                inst_ver = self._installed.get(_normalize(name)) or "—"
+                statut, color, note = "Bloqué", "#8e44ad", "Dép. incompatible"
+                blocked += 1
             else:
                 inst_ver = self._installed.get(_normalize(name))
                 note = ""
@@ -345,14 +392,16 @@ class ComparePanel(tk.Frame):
                 else:
                     statut, color = "Différent", "#e67e22"
                     diff += 1
+
             iid = self.cmp_tree.insert("", tk.END,
-                                       values=(filename, ver_dispo, inst_ver, statut, note))
+                                       values=(filename, ver_dispo, inst_ver, statut, note, deps_str))
             self.cmp_tree.tag_configure(color, foreground=color)
             self.cmp_tree.item(iid, tags=(color,))
 
         self.cmp_count.set(f"{len(self._whls)} fichier(s) .whl")
         self.summary_var.set(
-            f"Résumé :  {ok} OK  |  {diff} différent(s)  |  {missing} absent(s)  |  {incompat} incompatible(s)"
+            f"Résumé :  {ok} OK  |  {diff} différent(s)  |  {missing} absent(s)  |"
+            f"  {incompat} incompatible(s)  |  {blocked} bloqué(s)"
         )
 
     def _install_selected(self):
@@ -364,6 +413,9 @@ class ComparePanel(tk.Frame):
         filename, statut = vals[0], vals[3]
         if statut == "Incompatible":
             messagebox.showerror("Incompatible", f"Ce wheel n'est pas compatible :\n{vals[4]}")
+            return
+        if statut == "Bloqué":
+            messagebox.showerror("Bloqué", f"Une dépendance est incompatible :\n{vals[5]}")
             return
         if statut == "OK":
             if not messagebox.askyesno("Déjà installé",
